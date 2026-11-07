@@ -1,15 +1,16 @@
-// 진단용: KOMSA 홈페이지가 GitHub 서버에서 열리는지 확인 (일반 요청 1회씩)
-const urls = {
+// 진단용: KOMSA 표 구조와 과거 조회 범위 확인
+const pages = {
   tomorrow: "https://komsa.or.kr/prog/tmmrwSailing/kor/sub03_0207/list.do?searchJbcd=F",
   current: "https://komsa.or.kr/prog/pssgCurState/kor/sub03_0202/list.do?jbcd=F",
-  confirmed: "https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=2026-11-06",
+  c20251107: "https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=2025-11-07",
+  c20250115: "https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=2025-01-15",
+  c20240115: "https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=2024-01-15",
 };
-for (const [k, u] of Object.entries(urls)) {
-  try {
-    const r = await fetch(u); const t = await r.text();
-    const body = t.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-    const i = body.search(/천사|퍼스트엔젤/);
-    console.log("==", k, r.status, t.length, i >= 0 ? body.slice(Math.max(0, i - 300), i + 900) : body.slice(0, 300));
-    if (k !== "current") { const m = t.match(/<table[\s\S]*?<\/table>/); if (m) console.log("TABLEHTML", m[0].slice(0, 1500).replace(/\s+/g, " ")); }
-  } catch (e) { console.log("==", k, "ERR", e.message); }
+for (const [k, u] of Object.entries(pages)) {
+  const t = await (await fetch(u)).text();
+  const rows = [...t.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(m => m[1]).filter(r => /천사[13]호|퍼스트엔젤|>\s*엔젤/.test(r));
+  console.log("==", k, "matching rows", rows.length);
+  for (const r of rows.slice(0, 2)) console.log("RAW", r.replace(/\s+/g, " ").slice(0, 700));
+  for (const r of rows.slice(0, 20)) console.log("CELLS", JSON.stringify([...r.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map(m => m[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim())));
+  await new Promise(r => setTimeout(r, 1500));
 }
