@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>하의도 배편</title>
+<meta name="description" content="목포 ↔ 하의도 배편별 운항 예상과 공식 발표">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* 레이아웃: 상단 고정 바(날짜 탭) → 배편 목록(눌러서 펼침) → 근거 탭 */
+:root{
+  --bg:#f2f5f7; --card:#fff; --ink:#10212e; --muted:#5d6e7b; --line:#dbe3e8; --sea:#1d5d8a;
+  --go:#17784b; --go-bg:#e2f3ea; --warn:#9a6200; --warn-bg:#fcf0d6; --stop:#b42a20; --stop-bg:#fbe3e0;
+  --f:"IBM Plex Sans KR",system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; --m:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0d1720; --card:#15232e; --ink:#e5eef4; --muted:#93a6b4; --line:#273845; --sea:#72b4e2;
+  --go:#5fd09a; --go-bg:#173628; --warn:#ebb853; --warn-bg:#3b2f13; --stop:#f38c83; --stop-bg:#3f1d1a; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f);-webkit-text-size-adjust:100%}
+.wrap{max-width:720px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px)) 40px max(16px,env(safe-area-inset-right,0px))}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding-top:max(12px,env(safe-area-inset-top,0px));border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+h1{font-size:1.25rem;margin:0}
+.upd{font-size:.78rem;color:var(--muted)}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:6px 10px;font:inherit;font-size:.85rem;cursor:pointer;display:grid;justify-items:center;gap:2px;min-width:56px}
+.tab[aria-selected="true"]{border-color:var(--sea);box-shadow:inset 0 0 0 1px var(--sea)}
+.tab b{font-weight:700}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--line)}
+.d0{background:var(--go)}.d1{background:var(--warn)}.d2{background:var(--stop)}
+.seg{display:flex;gap:4px;margin:12px 0 8px}
+.seg button{flex:1;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:8px;padding:6px;font:inherit;font-size:.85rem;cursor:pointer}
+.seg button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink)}
+.alert{margin-top:12px;border-radius:10px;padding:10px 12px;background:var(--stop-bg);color:var(--stop);font-size:.9rem;display:grid;gap:2px}
+.alert.ok{background:var(--go-bg);color:var(--go)}
+.list{display:grid;gap:8px}
+.sail{background:var(--card);border:1px solid var(--line);border-radius:12px}
+.sail>button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:62px 1fr auto;gap:10px;align-items:center;padding:12px;cursor:pointer}
+.sail>button:focus-visible{outline:2px solid var(--sea);border-radius:12px}
+.t{font-family:var(--m);font-size:1.25rem;font-weight:600;font-variant-numeric:tabular-nums}
+.who{min-width:0}
+.who b{display:block;font-weight:500}
+.who span{font-size:.8rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.chip{display:grid;justify-items:end;gap:1px;text-align:right}
+.chip .s{font-weight:700;font-size:.88rem;padding:3px 10px;border-radius:999px;white-space:nowrap}
+.chip .p{font-family:var(--m);font-size:.75rem;color:var(--muted)}
+.s.go{color:var(--go);background:var(--go-bg)}.s.warn{color:var(--warn);background:var(--warn-bg)}.s.stop{color:var(--stop);background:var(--stop-bg)}
+.s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--muted);background:var(--bg)}
+.more{border-top:1px solid var(--line);padding:12px;display:grid;gap:10px;font-size:.88rem}
+.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.kv div{background:var(--bg);border-radius:8px;padding:6px 8px}
+.kv small{display:block;color:var(--muted);font-size:.72rem}
+.kv b{font-family:var(--m);font-variant-numeric:tabular-nums}
+.lbl{color:var(--muted);font-size:.78rem}
+.past{display:flex;flex-wrap:wrap;gap:4px}
+.past span{font-family:var(--m);font-size:.74rem;padding:2px 6px;border-radius:6px}
+.past .y1{background:var(--stop-bg);color:var(--stop)}.past .y0{background:var(--go-bg);color:var(--go)}
+.far{font-size:.72rem;color:var(--muted)}
+.empty{color:var(--muted);text-align:center;padding:24px 0}
+nav.bottom{display:flex;gap:2px}
+nav.bottom button{border:0;background:transparent;color:var(--muted);font:inherit;padding:8px;border-bottom:2px solid transparent;cursor:pointer}
+nav.bottom button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink);font-weight:700}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;font-size:.9rem}
+.panel h2{font-size:1rem;margin:0}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.84rem}
+th,td{padding:6px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:500}
+td{font-family:var(--m);font-variant-numeric:tabular-nums}
+td:first-child{font-family:var(--f)}
+.src{display:flex;justify-content:space-between;gap:8px}
+.ok{color:var(--go)}.bad{color:var(--stop)}
+a{color:var(--sea)}
+code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px}
+.btn{border:1px solid var(--sea);color:var(--sea);background:transparent;border-radius:8px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;justify-self:start}
+@media (max-width:420px){.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:54px 1fr auto}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="top"><h1>하의도 배편</h1>
+      <nav class="bottom"><button data-view="ships" aria-pressed="true">배편</button><button data-view="why" aria-pressed="false">근거·알림</button></nav></div>
+    <div class="upd" id="upd">불러오는 중</div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="날짜"></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="alert"></div>
+  <div id="view-ships">
+    <div class="seg" id="seg">
+      <button data-dir="all" aria-pressed="true">전체</button>
+      <button data-dir="out" aria-pressed="false">목포 출발</button>
+      <button data-dir="in" aria-pressed="false">섬 출발</button>
+    </div>
+    <div class="list" id="list"><p class="empty">배편 자료를 불러오는 중</p></div>
+  </div>
+  <div id="view-why" hidden></div>
+  <p class="upd" style="margin-top:16px">공식 발표가 없는 배편은 예상입니다. 출항 전 선사·운항관리센터 안내를 확인하세요.</p>
+</main>
+
+<script>
+(()=>{
+const $=id=>document.getElementById(id);
+let D=null, day=0, dir="all", open=new Set(), view="ships";
+const KO_DAY="일월화수목금토";
+const lab=d=>{const x=new Date(d+"T00:00:00");return {md:`${x.getMonth()+1}/${x.getDate()}`,w:KO_DAY[x.getDay()]}};
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const pct=p=>p==null?"–":Math.round(p*100)+"%";
+const isOut=s=>/목포/.test(s.port||s.direction||"");
+
+function verdict(s){
+  if(s.official){const o=s.official.outcome;
+    if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(s.official.status||"통제"),lv:2};
+    if(o==="operated")return{cls:"off go",txt:"공식 "+(s.official.status||"운항"),lv:0};
+    if(o==="nonoperating")return{cls:"na",txt:s.official.status||"비운항",lv:-1};
+    return{cls:"na",txt:s.official.status||"확인 중",lv:-1}}
+  if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
+  if(s.p>=.5)return{cls:"stop",txt:"결항 위험",lv:2};
+  if(s.p>=.2)return{cls:"warn",txt:"주의",lv:1};
+  return{cls:"go",txt:"운항 예상",lv:0};
+}
+
+async function load(){
+  try{
+    const r=await fetch("data/latest.json?t="+Date.now(),{cache:"no-store"});
+    if(!r.ok)throw new Error(r.status);
+    const prev=D;D=await r.json();
+    notifyChanges(prev,D);render();
+  }catch(e){$("upd").textContent="자료를 불러오지 못했습니다";}
+}
+function render(){
+  const g=new Date(D.generatedAt);
+  $("upd").textContent=`${g.getMonth()+1}/${g.getDate()} ${String(g.getHours()).padStart(2,"0")}:${String(g.getMinutes()).padStart(2,"0")} 갱신`;
+  // 날짜 탭
+  $("tabs").innerHTML=D.days.map((d,i)=>{const l=lab(d.date);const lv=Math.max(-1,...d.sailings.map(s=>verdict(s).lv));
+    return `<button class="tab" role="tab" aria-selected="${i===day}" data-i="${i}"><span>${i===0?"오늘":i===1?"내일":l.w}</span><b>${l.md}</b><span class="dot ${lv>=0?"d"+lv:""}"></span></button>`}).join("");
+  $("tabs").querySelectorAll(".tab").forEach(b=>b.onclick=()=>{day=+b.dataset.i;open.clear();render()});
+  // 최근 공식 발표 변화(24시간)
+  const recent=(D.changeLog||[]).filter(c=>Date.now()-Date.parse(c.at)<864e5).slice(0,4);
+  $("alert").innerHTML=recent.length?`<div class="alert ${recent.every(c=>c.outcome!=="cancelled")?"ok":""}"><b>새 공식 발표</b>${recent.map(c=>`<span>${lab(c.date).md} ${c.time} ${esc(c.vessel)} ${esc(c.port)} · ${c.from?esc(c.from)+" → ":""}<b>${esc(c.to)}</b></span>`).join("")}</div>`:"";
+  renderList();if(view==="why")renderWhy();
+}
+function renderList(){
+  const d=D.days[day];if(!d){$("list").innerHTML="";return}
+  let ss=d.sailings.filter(s=>dir==="all"||(dir==="out")===isOut(s));
+  if(!ss.length){$("list").innerHTML=`<p class="empty">배편이 없습니다</p>`;return}
+  const far=day>=3;
+  $("list").innerHTML=ss.map((s,i)=>{const v=verdict(s);const id=d.date+s.time+s.vesselId;
+    const sub=s.official?(s.p!=null?`예상 결항 ${pct(s.p)}`:""):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`);
+    return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
+      <span class="t">${s.time}</span>
+      <span class="who"><b>${esc(s.vessel)}</b><span>${esc(s.port)} 출발 · ${esc(s.route)}</span></span>
+      <span class="chip"><span class="s ${v.cls}">${esc(v.txt)}</span><span class="p">${sub}${far&&!s.official?" · 먼 예보":""}</span></span>
+    </button>${open.has(id)?detail(s):""}</div>`}).join("");
+  $("list").querySelectorAll(".sail>button").forEach(b=>b.onclick=()=>{const id=b.dataset.id;open.has(id)?open.delete(id):open.add(id);renderList()});
+}
+function detail(s){
+  const w=s.weather||{},k=s.kma;
+  const models=Object.entries(s.byModel||{}).filter(([,v])=>v!=null).map(([m,v])=>`${m} ${pct(v)}`).join(" · ");
+  const sim=(s.similar||[]);
+  return `<div class="more">
+    <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
+    ${k?`<div><span class="lbl">기상청 해상예보(${esc(D.kmaZone)}, ${esc(k.part)})</span><br>풍속 ${esc(k.wind)} m/s · 파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 단기 해상예보 범위 밖(4일 이후)</div>`}
+    ${models?`<div><span class="lbl">예보 모델별 결항 확률</span><br>${models}</div>`:""}
+    ${sim.length?`<div><span class="lbl">이 배의 비슷한 날씨 과거 사례 (빨강 = 결항)</span><div class="past">${sim.map(x=>`<span class="y${x.y}" title="풍속 ${x.wind} · 파고 ${x.wave}">${x.date.slice(2)} ${x.time}</span>`).join("")}</div></div>`:""}
+  </div>`;
+}
+function row(name,m){if(!m)return"";const prec=m.hit+m.falseAlarm?Math.round(m.hit/(m.hit+m.falseAlarm)*100)+"%":"–";const rec=m.cancellations?Math.round(m.hit/m.cancellations*100)+"%":"–";
+  return `<tr><td>${name}</td><td>${m.brier.toFixed(3)}</td><td>${rec}</td><td>${prec}</td><td>${m.miss}</td><td>${m.falseAlarm}</td></tr>`}
+function renderWhy(){
+  const m=D.model,v=m.validation;
+  const vs=(D.vesselStats||[]).filter(x=>x.total);
+  $("view-why").innerHTML=`<div class="list">
+  <section class="panel"><h2>예측 방법</h2>
+    <p>각 배편 출항 시각 앞뒤의 풍속·돌풍·파고·시정 예보와 기상청 해상예보를, 같은 배의 과거 실제 운항·통제 기록과 짝지어 학습한 확률입니다. 4개 기상 모델 결과가 다르면 확률 범위로 보여줍니다. 공식 발표가 나오면 예상 대신 공식 결과를 표시합니다.</p>
+    <p class="lbl">현재: ${esc(m.mode)} · 학습 배편 ${m.trainRows}편(결항 ${m.trainCancelled}편) · ${m.trainFrom??"–"} ~ ${m.trainTo??"–"}</p>
+    <p class="lbl">기준: 결항 확률 20% 미만 운항 예상 · 20~50% 주의 · 50% 이상 결항 위험</p>
+  </section>
+  <section class="panel"><h2>맞았는지 검증</h2>
+  ${v?`<p class="lbl">${v.trainFrom}~${v.trainTo} 자료로만 학습하고, 이후 ${v.testFrom}~${v.testTo} 실제 결과와 비교했습니다(미래 자료 사용 안 함).</p>
+    <div class="tw"><table><tr><th>방법</th><th>오차↓</th><th>결항 포착</th><th>경보 적중</th><th>놓침</th><th>헛경보</th></tr>
+    ${row("이 사이트 모델",v.full)}${row("모델(기상청 제외)",v.omOnly)}${row("기상청 예보 규칙",v.kmaRule)}${row("평소 결항 비율",v.baseRate)}</table></div>
+    <p class="lbl">오차는 Brier 점수(0에 가까울수록 정확). 결항 포착 = 실제 결항 중 미리 50% 이상으로 본 비율.</p>`
+   :`<p>과거 실적이 아직 충분히 모이지 않았습니다. 자료가 쌓이면 자동으로 검증 결과가 나옵니다. (수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일)</p>`}
+  </section>
+  ${vs.length?`<section class="panel"><h2>배별 실적</h2><div class="tw"><table><tr><th>배</th><th>운항</th><th>통제</th><th>비운항</th><th>일수</th></tr>
+    ${vs.map(x=>`<tr><td>${esc(x.vessel)}</td><td>${x.operated}</td><td>${x.cancelled}</td><td>${x.nonoperating}</td><td>${x.days}</td></tr>`).join("")}</table></div></section>`:""}
+  <section class="panel"><h2>알림 받기</h2>
+    <p>이 페이지를 열어 둔 동안 새 공식 발표가 나오면 알림을 띄웁니다.</p>
+    <button class="btn" id="notiBtn">브라우저 알림 켜기</button>
+    <p class="lbl">휴대폰으로 받으려면 ntfy 앱을 설치하고 관리자가 정한 주제 이름을 구독하세요.</p>
+  </section>
+  <section class="panel"><h2>자료 상태</h2>
+    ${(D.sources||[]).map(s=>`<div class="src"><span>${esc(s.name)}</span><span class="${s.ok?"ok":"bad"}">${s.ok?"정상":esc(s.error||"실패")}</span></div>`).join("")}
+    <p class="lbl">출처: 한국해양교통안전공단 여객선 운항상태(공공데이터포털), 기상청 해양기상정보, Open-Meteo. 30분마다 갱신.</p>
+  </section></div>`;
+  const nb=$("notiBtn");if(nb)nb.onclick=async()=>{if(!("Notification"in window)){nb.textContent="이 브라우저는 지원하지 않습니다";return}
+    const p=await Notification.requestPermission();nb.textContent=p==="granted"?"알림 켜짐":"알림이 허용되지 않았습니다"};
+}
+function notifyChanges(prev,cur){
+  if(!prev||!("Notification"in window)||Notification.permission!=="granted")return;
+  const seen=new Set((prev.changeLog||[]).map(c=>c.at+c.date+c.time+c.vessel));
+  const fresh=(cur.changeLog||[]).filter(c=>!seen.has(c.at+c.date+c.time+c.vessel));
+  if(fresh.length)try{new Notification("하의도 배편 공식 발표",{body:fresh.slice(0,5).map(c=>`${lab(c.date).md} ${c.time} ${c.vessel} ${c.to}`).join("\n")})}catch(e){}
+}
+$("seg").querySelectorAll("button").forEach(b=>b.onclick=()=>{dir=b.dataset.dir;$("seg").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));renderList()});
+document.querySelectorAll("nav.bottom button").forEach(b=>b.onclick=()=>{view=b.dataset.view;document.querySelectorAll("nav.bottom button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+  $("view-ships").hidden=view!=="ships";$("view-why").hidden=view!=="why";if(view==="why"&&D)renderWhy();window.scrollTo(0,0)});
+load();setInterval(load,5*60e3);
+})();
+</script>
+</body>
+</html>
