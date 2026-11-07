@@ -1,18 +1,15 @@
-// 진단용: 운항상태 코드 확인 (인증키는 출력하지 않음)
-const KEY = process.env.DATA_GO_KR_KEY.trim();
-const base = "https://apis.data.go.kr/B554035/ferry-route-info-v4/get-ferry-route-info-v4";
-const keyPart = KEY.includes("%") ? "serviceKey=" + KEY : "serviceKey=" + encodeURIComponent(KEY);
-const kst = new Date(Date.now() + 9 * 3600e3);
-const d = n => new Date(kst.getTime() - n * 86400e3).toISOString().slice(0, 10).replaceAll("-", "");
-const codes = new Map();
-for (const date of ["20261106", "20261105", d(0), d(-1), d(-2)]) for (const name of ["천사1호", "천사3호", "퍼스트엔젤", "엔젤"]) {
-  const q = new URLSearchParams({ pageNo: "1", numOfRows: "1000", dataType: "JSON", rlvtYmd: date, psnshpNm: name });
-  const j = await (await fetch(`${base}?${keyPart}&${q}`)).json();
-  const r = j.response || j; let it = r.body?.items?.item ?? r.body?.items ?? []; if (!Array.isArray(it)) it = [it];
-  const by = new Map();
-  for (const x of it) { codes.set(x.nvg_stts_cd + " " + x.nvg_stts_nm, (codes.get(x.nvg_stts_cd + " " + x.nvg_stts_nm) || 0) + 1);
-    const k = x.sail_tm + "/" + x.nvg_drc_nm; if (!by.has(k)) by.set(k, []); by.get(k).push(`${x.nvg_stts_nm}@${x.portcl_nm ?? "-"}@${(x.nvg_stts_chg_dt || "").slice(11, 16)}`); }
-  console.log(`== ${date} ${name} rows=${it.length} total=${r.body?.totalCount} code=${r.header?.resultCode}`);
-  for (const [k, v] of [...by].sort((a, b) => +a[0].split("/")[0] - +b[0].split("/")[0])) console.log("  ", k, "|", v.join(" ; ").slice(0, 300));
+// 진단용: KOMSA 홈페이지가 GitHub 서버에서 열리는지 확인 (일반 요청 1회씩)
+const urls = {
+  tomorrow: "https://komsa.or.kr/prog/tmmrwSailing/kor/sub03_0207/list.do?searchJbcd=F",
+  current: "https://komsa.or.kr/prog/pssgCurState/kor/sub03_0202/list.do?jbcd=F",
+  confirmed: "https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=2026-11-06",
+};
+for (const [k, u] of Object.entries(urls)) {
+  try {
+    const r = await fetch(u); const t = await r.text();
+    const body = t.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const i = body.search(/천사|퍼스트엔젤/);
+    console.log("==", k, r.status, t.length, i >= 0 ? body.slice(Math.max(0, i - 300), i + 900) : body.slice(0, 300));
+    if (k !== "current") { const m = t.match(/<table[\s\S]*?<\/table>/); if (m) console.log("TABLEHTML", m[0].slice(0, 1500).replace(/\s+/g, " ")); }
+  } catch (e) { console.log("==", k, "ERR", e.message); }
 }
-console.log("CODES", JSON.stringify([...codes]));
