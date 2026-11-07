@@ -114,13 +114,14 @@ const KO_DAY="일월화수목금토";
 const lab=d=>{const x=new Date(d+"T00:00:00");return {md:`${x.getMonth()+1}/${x.getDate()}`,w:KO_DAY[x.getDay()]}};
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const pct=p=>p==null?"–":Math.round(p*100)+"%";
-const isOut=s=>/목포/.test(s.port||s.direction||"");
+const isOut=s=>s.out??/목포/.test(s.port||"");
 
 function verdict(s){
   if(s.official){const o=s.official.outcome;
     if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(s.official.status||"통제"),lv:2};
     if(o==="operated")return{cls:"off go",txt:"공식 "+(s.official.status||"운항"),lv:0};
-    if(o==="nonoperating")return{cls:"na",txt:s.official.status||"비운항",lv:-1};
+    if(o==="nonoperating")return{cls:"na",txt:"비운항",lv:-1};
+    if(o==="pending")return{cls:"warn",txt:"공식 "+(s.official.status||"검토"),lv:1};
     return{cls:"na",txt:s.official.status||"확인 중",lv:-1}}
   if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
   if(s.p>=.5)return{cls:"stop",txt:"결항 위험",lv:2};
@@ -154,10 +155,10 @@ function renderList(){
   if(!ss.length){$("list").innerHTML=`<p class="empty">배편이 없습니다</p>`;return}
   const far=day>=3;
   $("list").innerHTML=ss.map((s,i)=>{const v=verdict(s);const id=d.date+s.time+s.vesselId;
-    const sub=s.official?(s.p!=null?`예상 결항 ${pct(s.p)}`:""):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`);
+    const sub=s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`);
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="t">${s.time}</span>
-      <span class="who"><b>${esc(s.vessel)}</b><span>${esc(s.port)} 출발 · ${esc(s.route)}</span></span>
+      <span class="who"><b>${esc(s.vessel)}</b><span>${esc(s.port)} 출발 · ${esc(s.route.replace("목포-",""))}행</span></span>
       <span class="chip"><span class="s ${v.cls}">${esc(v.txt)}</span><span class="p">${sub}${far&&!s.official?" · 먼 예보":""}</span></span>
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
   $("list").querySelectorAll(".sail>button").forEach(b=>b.onclick=()=>{const id=b.dataset.id;open.has(id)?open.delete(id):open.add(id);renderList()});
@@ -180,7 +181,7 @@ function renderWhy(){
   const vs=(D.vesselStats||[]).filter(x=>x.total);
   $("view-why").innerHTML=`<div class="list">
   <section class="panel"><h2>예측 방법</h2>
-    <p>각 배편 출항 시각 앞뒤의 풍속·돌풍·파고·시정 예보와 기상청 해상예보를, 같은 배의 과거 실제 운항·통제 기록과 짝지어 학습한 확률입니다. 4개 기상 모델 결과가 다르면 확률 범위로 보여줍니다. 공식 발표가 나오면 예상 대신 공식 결과를 표시합니다.</p>
+    <p>각 배편 출항 시각 앞뒤의 풍속·돌풍·파고·시정 예보와 기상청 해상예보를, 같은 배의 과거 실제 운항·통제 기록과 짝지어 학습한 확률입니다. 4개 기상 모델 결과가 다르면 확률 범위로 보여줍니다. KOMSA가 당일 현황이나 다음 날 운항예보(매일 17시경)를 발표하면 예상 대신 공식 결과를 표시합니다.</p>
     <p class="lbl">현재: ${esc(m.mode)} · 학습 배편 ${m.trainRows}편(결항 ${m.trainCancelled}편) · ${m.trainFrom??"–"} ~ ${m.trainTo??"–"}</p>
     <p class="lbl">기준: 결항 확률 20% 미만 운항 예상 · 20~50% 주의 · 50% 이상 결항 위험</p>
   </section>
@@ -191,8 +192,9 @@ function renderWhy(){
     <p class="lbl">오차는 Brier 점수(0에 가까울수록 정확). 결항 포착 = 실제 결항 중 미리 50% 이상으로 본 비율.</p>`
    :`<p>과거 실적이 아직 충분히 모이지 않았습니다. 자료가 쌓이면 자동으로 검증 결과가 나옵니다. (수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일)</p>`}
   </section>
-  ${vs.length?`<section class="panel"><h2>배별 실적</h2><div class="tw"><table><tr><th>배</th><th>운항</th><th>통제</th><th>비운항</th><th>일수</th></tr>
-    ${vs.map(x=>`<tr><td>${esc(x.vessel)}</td><td>${x.operated}</td><td>${x.cancelled}</td><td>${x.nonoperating}</td><td>${x.days}</td></tr>`).join("")}</table></div></section>`:""}
+  ${vs.length?`<section class="panel"><h2>배별 실적 (KOMSA 확정 운항실적)</h2><div class="tw"><table><tr><th>배</th><th>정상</th><th>통제</th><th>비운항</th><th>자료 시작</th></tr>
+    ${vs.map(x=>`<tr><td>${esc(x.vessel)}</td><td>${x.operated}</td><td>${x.cancelled}</td><td>${x.nonoperating}</td><td>${x.from??"–"}</td></tr>`).join("")}</table></div>
+    <p class="lbl">과거 자료 수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일</p></section>`:""}
   <section class="panel"><h2>알림 받기</h2>
     <p>이 페이지를 열어 둔 동안 새 공식 발표가 나오면 알림을 띄웁니다.</p>
     <button class="btn" id="notiBtn">브라우저 알림 켜기</button>
@@ -200,7 +202,7 @@ function renderWhy(){
   </section>
   <section class="panel"><h2>자료 상태</h2>
     ${(D.sources||[]).map(s=>`<div class="src"><span>${esc(s.name)}</span><span class="${s.ok?"ok":"bad"}">${s.ok?"정상":esc(s.error||"실패")}</span></div>`).join("")}
-    <p class="lbl">출처: 한국해양교통안전공단 여객선 운항상태(공공데이터포털), 기상청 해양기상정보, Open-Meteo. 30분마다 갱신.</p>
+    <p class="lbl">출처: 한국해양교통안전공단(운항현황·다음 날 운항예보·확정 운항실적), 기상청 해양기상정보, Open-Meteo. 30분마다 갱신.</p>
   </section></div>`;
   const nb=$("notiBtn");if(nb)nb.onclick=async()=>{if(!("Notification"in window)){nb.textContent="이 브라우저는 지원하지 않습니다";return}
     const p=await Notification.requestPermission();nb.textContent=p==="granted"?"알림 켜짐":"알림이 허용되지 않았습니다"};

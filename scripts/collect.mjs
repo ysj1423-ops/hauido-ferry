@@ -1,12 +1,11 @@
 // 하의도 배편 자료 수집 + 예측 (GitHub Actions에서 30분마다 실행)
-// 실행: DATA_GO_KR_KEY=... node scripts/collect.mjs
+// 실행: node scripts/collect.mjs  (선택: NTFY_TOPIC=주제 → 공식 발표 변화 알림)
 import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DATA = path.join(ROOT, "docs", "data");
 const CFG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
-const KEY = (process.env.DATA_GO_KR_KEY || "").trim();
 const NTFY = (process.env.NTFY_TOPIC || "").trim();
 fs.mkdirSync(DATA, { recursive: true });
 
@@ -41,54 +40,56 @@ async function source(key, name, fn) {
   catch (e) { sources.push({ key, name, ok: false, error: String(e.message || e).slice(0, 200) }); log("FAIL", key, e.message); return null; }
 }
 
-// ---------- 1. KOMSA 여객선 운항상태 (공공데이터포털) ----------
-const VESSEL_BY_NAME = Object.fromEntries(CFG.vessels.map(v => [v.name, v.id]));
+// ---------- 1. KOMSA 공식 운항 정보 (한국해양교통안전공단 홈페이지, 목포운항관리센터 F) ----------
+// - 확정 운항실적(날짜별): 정상/통제/비운 + 사유  → 학습 정답
+// - 당일 운항현황: 정상/통제/비운 + 출항여부(출항전/운항중/완료)
+// - 다음 날 운항예보(매일 17시경): 운항/결항/검토/대기·지연/비운항 + 사유
+const ROUTES = CFG.routes; // 면허항로명
+const vid = name => (CFG.vessels.find(v => v.name === name)?.id) || name;
 function classify(s = "") {
   s = s.replace(/\s/g, "");
-  if (/통제|결항|취소/.test(s)) return "cancelled";
+  if (/통제|결항/.test(s)) return "cancelled";
   if (/비운/.test(s)) return "nonoperating";
-  if (/정상|운항|완료|출항|도착|입항|지연|운항중|출발/.test(s)) return "operated";
+  if (/검토|대기|지연/.test(s)) return "pending";
+  if (/정상|운항/.test(s)) return "operated";
   return "unknown";
 }
 const fmtTime = t => { t = String(t || "").replace(/[^0-9]/g, "").padStart(4, "0"); return t.slice(0, 2) + ":" + t.slice(2, 4); };
+const cellsOf = html => [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].map(m =>
+  [...m[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map(c => c[1].replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())).filter(c => c.length >= 6);
+async function komsaPage(url) { await sleep(800); return get(url, { json: false, tries: 3 }); }
 
-let dateParamStyle = readJSON("actuals.json", {}).dateParamStyle || null;
-async function komsaDay(date) {
-  const styles = dateParamStyle ? [dateParamStyle] : ["compact", "dash"];
-  let out = [], raw = [];
-  for (const style of styles) {
-    out = []; raw = [];
-    for (const v of CFG.vessels) {
-      const base = "https://apis.data.go.kr/B554035/ferry-route-info-v4/get-ferry-route-info-v4";
-      const q = new URLSearchParams({ pageNo: "1", numOfRows: "300", dataType: "JSON", rlvtYmd: style === "compact" ? compact(date) : date, psnshpNm: v.name });
-      const keyPart = KEY.includes("%") ? "serviceKey=" + KEY : "serviceKey=" + encodeURIComponent(KEY);
-      const j = await get(`${base}?${keyPart}&${q}`);
-      const resp = j.response || j;
-      const code = resp?.header?.resultCode;
-      if (code && !["00", "0", "0000", "200", "INFO-000"].includes(String(code)) && !["03", "153"].includes(String(code))) {
-        throw new Error(`API ${code} ${resp.header.resultMsg || ""}`);
-      }
-      let items = resp?.body?.items?.item ?? resp?.body?.items ?? [];
-      if (!Array.isArray(items)) items = items ? [items] : [];
-      for (const it of items) {
-        raw.push(it);
-        const name = it.psnshp_nm || v.name;
-        const routeTxt = [it.lcns_seawy_nm, it.nvg_seawy_nm, it.portcl_nm].join(" ");
-        if (!VESSEL_BY_NAME[name] && !CFG.routeKeywords.some(k => routeTxt.includes(k))) continue;
-        out.push({
-          date, time: fmtTime(it.sail_tm), vessel: name, vesselId: VESSEL_BY_NAME[name] || name,
-          port: it.portcl_nm || "", direction: it.nvg_drc_nm || "", route: it.nvg_seawy_nm || it.lcns_seawy_nm || "",
-          status: it.nvg_stts_nm || "", outcome: classify(it.nvg_stts_nm), changedAt: it.nvg_stts_chg_dt || null,
-        });
-      }
-      await sleep(250);
-    }
-    if (out.length || dateParamStyle) { if (!dateParamStyle && out.length) dateParamStyle = style; break; }
+async function komsaConfirmed(date) {
+  const h = await komsaPage(`https://komsa.or.kr/prog/crtfctSailing/kor/sub03_0206/list.do?searchJbcd=F&searchIlja=${date}`);
+  if (!/crtfctNaviTable/.test(h)) throw new Error("확정 운항실적 표 없음");
+  // [출항시간, 항로명, 여객선명, 출항지, 편도/왕복, 운항구분, 사유, ...]
+  return cellsOf(h).filter(c => ROUTES.includes(c[1])).map(c => ({
+    date, time: fmtTime(c[0]), route: c[1], vessel: c[2], vesselId: vid(c[2]), port: c[3], status: c[5], reason: c[6] || "", outcome: classify(c[5]) }));
+}
+async function komsaToday() {
+  const h = await komsaPage("https://komsa.or.kr/prog/pssgCurState/kor/sub03_0202/list.do?jbcd=F");
+  // [출항시각, 여객선명, 운항항로명, 운항방향, 출항지, 항로구분, 운항구분, 사유, 출항여부, 면허항로]
+  const rows = cellsOf(h).filter(c => c.length >= 10 && ROUTES.includes(c[9]));
+  const m = /기준시간\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(h.replace(/<[^>]+>/g, " "));
+  const date = m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : TODAY;
+  return { date, rows: rows.map(c => ({ date, time: fmtTime(c[0]), vessel: c[1], vesselId: vid(c[1]), detail: c[2], direction: c[3], port: c[4], route: c[9],
+    status: c[6], reason: c[7] || "", progress: c[8] || "", outcome: classify(c[6]) })) };
+}
+async function komsaTomorrow() {
+  const h = await komsaPage("https://komsa.or.kr/prog/tmmrwSailing/kor/sub03_0207/list.do?searchJbcd=F");
+  const t = h.replace(/<[^>]+>/g, " ");
+  const m = /적용일\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(t);
+  if (!m) throw new Error("운항예보 적용일 없음");
+  const date = `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  const up = /최종 업데이트 시간\s*:\s*([0-9:]+)/.exec(t)?.[1] || null;
+  // [출항시간, 출항지명, 항로명, 여객선명, 운항구분, 사유] — 같은 표가 화면에 두 번 나와 중복 제거
+  const seen = new Set(), rows = [];
+  for (const c of cellsOf(h)) {
+    if (!ROUTES.includes(c[2])) continue;
+    const k = c[0] + c[3]; if (seen.has(k)) continue; seen.add(k);
+    rows.push({ date, time: fmtTime(c[0]), port: c[1], route: c[2], vessel: c[3], vesselId: vid(c[3]), status: c[4], reason: c[5] || "", outcome: classify(c[4]) });
   }
-  // 같은 배·시각이 기항지별로 여러 줄이면 첫 줄(가장 이른 기항지)만
-  const seen = new Map();
-  for (const r of out) { const k = r.vesselId + "|" + r.time; if (!seen.has(k)) seen.set(k, r); else if (r.outcome === "cancelled") seen.get(k).outcome = "cancelled"; }
-  return { rows: [...seen.values()].sort((a, b) => a.time.localeCompare(b.time)), raw };
+  return { date, updated: up, rows };
 }
 
 // ---------- 2. 기상청 해상예보 (단기, 전남중부서해앞바다) ----------
@@ -220,26 +221,21 @@ function evaluate(rows, pfn) {
   const prev = readJSON("latest.json", null);
   const act = readJSON("actuals.json", { rows: {}, done: {} });
   const kmaArc = readJSON("kma-archive.json", {});
-  const debug = {};
 
-  // 1) 운항 실적/상태
-  if (!KEY) sources.push({ key: "komsa", name: "KOMSA 운항상태 API", ok: false, error: "인증키(DATA_GO_KR_KEY) 미설정" });
-  else await source("komsa", "KOMSA 운항상태 API", async () => {
-    const recent = [addDays(TODAY, -2), addDays(TODAY, -1), TODAY, addDays(TODAY, 1), addDays(TODAY, 2)];
+  // 1) KOMSA 공식: 당일 현황, 다음 날 예보, 확정 실적(최근 + 과거 채우기)
+  if (act.schema !== 2) { act.rows = {}; act.done = {}; act.schema = 2; }
+  const live = { today: null, tomorrow: null };
+  live.today = await source("komsaToday", "KOMSA 당일 운항현황", komsaToday);
+  live.tomorrow = await source("komsaTomorrow", "KOMSA 다음 날 운항예보", komsaTomorrow);
+  await source("komsaConfirmed", "KOMSA 확정 운항실적", async () => {
     const missing = [];
     for (let i = 3; i <= CFG.historyDays; i++) { const d = addDays(TODAY, -i); if (!act.done[d]) missing.push(d); }
-    const todo = [...recent, ...missing.slice(0, CFG.backfillPerRun)];
-    for (const d of todo) {
-      const { rows, raw } = await komsaDay(d);
-      if (raw.length && !debug.sample) debug.sample = raw.slice(0, 5);
-      for (const r of rows) {
-        const id = `${r.date}|${r.vesselId}|${r.time}`;
-        const old = act.rows[id];
-        act.rows[id] = { ...r, firstSeen: old?.firstSeen || new Date().toISOString() };
-      }
-      if (d < addDays(TODAY, -1)) act.done[d] = new Date().toISOString();
+    for (const d of [addDays(TODAY, -1), addDays(TODAY, -2), ...missing.slice(0, CFG.backfillPerRun)]) {
+      const rows = await komsaConfirmed(d);
+      for (const k of Object.keys(act.rows)) if (k.startsWith(d + "|")) delete act.rows[k];
+      for (const r of rows) act.rows[`${r.date}|${r.time}|${r.vessel}|${r.port}`] = r;
+      if (d < addDays(TODAY, -2)) act.done[d] = rows.length;
     }
-    act.dateParamStyle = dateParamStyle;
   });
 
   // 2) 기상청 해상예보: 최신 + 과거 발표분(학습용, 전날 17시 발표)
@@ -298,25 +294,27 @@ function evaluate(rows, pfn) {
   }
 
   // 배별 실적 요약
-  const vesselStats = CFG.vessels.map(v => {
-    const rs = actRows.filter(r => r.vesselId === v.id && r.date < TODAY);
-    return { vesselId: v.id, vessel: v.name, total: rs.length, operated: rs.filter(r => r.outcome === "operated").length,
+  const vesselStats = [...new Set(actRows.map(r => r.vessel))].map(name => {
+    const rs = actRows.filter(r => r.vessel === name && r.date < TODAY);
+    const reasons = {}; for (const r of rs) if (r.outcome === "cancelled") reasons[r.reason || "기타"] = (reasons[r.reason || "기타"] || 0) + 1;
+    return { vessel: name, total: rs.length, operated: rs.filter(r => r.outcome === "operated").length,
       cancelled: rs.filter(r => r.outcome === "cancelled").length, nonoperating: rs.filter(r => r.outcome === "nonoperating").length,
-      days: new Set(rs.map(r => r.date)).size };
-  });
+      from: rs.map(r => r.date).sort()[0] || null, reasons };
+  }).sort((a, b) => b.total - a.total);
 
   // 5) 앞으로 7일 배편 목록
   const days = [];
   for (let i = 0; i < 7; i++) days.push(addDays(TODAY, i));
   function scheduleFor(date) {
-    const official = actRows.filter(r => r.date === date);
-    if (official.length) return { basis: "official", list: official };
+    const L = live.today?.date === date ? live.today : live.tomorrow?.date === date ? live.tomorrow : null;
+    if (L && L.rows.length) return { basis: L === live.today ? "KOMSA 당일 운항현황" : `KOMSA 다음 날 운항예보${live.tomorrow.updated ? " (" + live.tomorrow.updated + " 발표)" : ""}`,
+      list: L.rows.map(r => ({ ...r, official: { status: r.status, outcome: r.outcome, reason: r.reason || "", progress: r.progress || "", kind: L === live.today ? "today" : "tomorrow" } })) };
     for (let w = 1; w <= 4; w++) {
       const d = addDays(date, -7 * w);
       const past = actRows.filter(r => r.date === d && r.outcome !== "nonoperating");
-      if (past.length) return { basis: `${d} 같은 요일 실적`, list: past.map(r => ({ ...r, status: "", outcome: "planned", date })) };
+      if (past.length) return { basis: `${d} 같은 요일 시간표`, list: past.map(r => ({ ...r, date, official: null })) };
     }
-    return { basis: "기본 시간표", list: CFG.fallbackSchedule.sailings.map(s => ({ ...s, date, vesselId: VESSEL_BY_NAME[s.vessel] || s.vessel, status: "", outcome: "planned" })) };
+    return { basis: "기본 시간표", list: CFG.fallbackSchedule.sailings.map(s => ({ ...s, date, vesselId: vid(s.vessel), official: null })) };
   }
   const MODEL_NAMES = { best_match: "종합", ecmwf_ifs025: "유럽", kma_seamless: "한국", gfs_seamless: "미국" };
   const out = [];
@@ -346,8 +344,8 @@ function evaluate(rows, pfn) {
         }).sort((a, b) => a.d - b.d).slice(0, 8).map(({ r }) => ({ date: r.date, time: r.time, y: r.y, wind: rd(r.wind), wave: rd(r.wave), kmaWind: r.kmaWind, kmaWave: r.kmaWave }));
       }
       return {
-        time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, direction: s.direction || "", route: s.route,
-        official: s.outcome !== "planned" ? { status: s.status, outcome: s.outcome, changedAt: s.changedAt || null } : null,
+        time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, out: s.port === "목포", route: s.route,
+        official: s.official,
         p: p == null ? null : rd(p, 3), pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
         byModel: Object.fromEntries(Object.entries(probs).map(([m, v]) => [MODEL_NAMES[m] || m, v == null ? null : rd(v, 3)])),
         weather: main ? { wind: rd(main.wind), gust: rd(main.gust), wave: rd(main.wave), visKm: main.vis == null ? null : rd(main.vis / 1000) } : null,
@@ -360,20 +358,25 @@ function evaluate(rows, pfn) {
 
   // 6) 공식 발표 변화 감지 + 알림
   const prevMap = new Map();
-  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official) prevMap.set(`${d.date}|${s.vesselId}|${s.time}`, s.official.status);
+  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, s.official.status);
   const changes = [];
-  if (prevMap.size) for (const d of out) for (const s of d.sailings) {
+  if (prev) for (const d of out) for (const s of d.sailings) {
     if (!s.official) continue;
-    const before = prevMap.get(`${d.date}|${s.vesselId}|${s.time}`);
+    const before = prevMap.get(`${d.date}|${s.vessel}|${s.time}|${s.port}`);
     if (before === s.official.status) continue;
-    if (before === undefined && s.official.outcome === "operated" && d.date <= TODAY) continue; // 당일 정상 진행은 알리지 않음
-    changes.push({ at: new Date().toISOString(), date: d.date, time: s.time, vessel: s.vessel, port: s.port, from: before ?? null, to: s.official.status, outcome: s.official.outcome });
+    if (before === undefined && s.official.kind === "today") continue; // 날짜가 넘어가며 생긴 당일 목록은 제외
+    changes.push({ at: new Date().toISOString(), date: d.date, time: s.time, vessel: s.vessel, port: s.port, from: before ?? null, to: s.official.status, reason: s.official.reason, outcome: s.official.outcome });
   }
-  const changeLog = [...changes, ...(prev?.changeLog || [])].slice(0, 40);
+  const changeLog = [...changes, ...(prev?.changeLog || [])].slice(0, 60);
   if (NTFY && changes.length) {
-    const body = changes.slice(0, 10).map(c => `${c.date.slice(5)} ${c.time} ${c.vessel}(${c.port}) ${c.from ? c.from + "→" : ""}${c.to}`).join("\n");
-    await source("ntfy", "알림 보내기", async () => {
-      const r = await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY)}`, { method: "POST", body, headers: { Title: "Hauido ferry: official status", Tags: "ship" } });
+    const byDate = {};
+    for (const c of changes) (byDate[c.date] ||= []).push(c);
+    const lines = Object.entries(byDate).map(([d, cs]) => {
+      const bad = cs.filter(c => c.outcome !== "operated");
+      return `${d.slice(5).replace("-", "/")}: ` + (bad.length ? bad.map(c => `${c.time} ${c.vessel}(${c.port}) ${c.to}${c.reason ? "-" + c.reason : ""}`).join(", ") : `${cs.length}편 ${cs[0].to}`);
+    });
+    await source("ntfy", "휴대폰 알림", async () => {
+      const r = await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY)}`, { method: "POST", body: lines.join("\n"), headers: { Title: "Hauido ferry", Tags: "ship" } });
       if (!r.ok) throw new Error("HTTP " + r.status);
     });
   }
@@ -381,7 +384,6 @@ function evaluate(rows, pfn) {
   // 7) 저장
   writeJSON("actuals.json", act);
   writeJSON("kma-archive.json", kmaArc);
-  if (debug.sample) writeJSON("debug-sample.json", debug);
   const latest = {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
@@ -394,6 +396,7 @@ function evaluate(rows, pfn) {
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },
+    tomorrowIssued: live.tomorrow ? { date: live.tomorrow.date, updated: live.tomorrow.updated } : null,
   };
   writeJSON("latest.json", latest);
   log("done", { train: train.length, positives, enough, changes: changes.length, sources: sources.map(s => s.key + ":" + (s.ok ? "ok" : "fail")).join(" ") });

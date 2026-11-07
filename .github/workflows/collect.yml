@@ -19,7 +19,6 @@ jobs:
           node-version: 20
       - name: Collect and predict
         env:
-          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node scripts/collect.mjs
       - name: Commit data
