@@ -21,6 +21,7 @@
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f);-webkit-text-size-adjust:100%}
 .wrap{max-width:720px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px)) 40px max(16px,env(safe-area-inset-right,0px))}
+header .wrap{padding-bottom:0}
 header{position:sticky;top:0;z-index:5;background:var(--bg);padding-top:max(12px,env(safe-area-inset-top,0px));border-bottom:1px solid var(--line)}
 .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
 h1{font-size:1.25rem;margin:0}
@@ -145,8 +146,12 @@ function render(){
     return `<button class="tab" role="tab" aria-selected="${i===day}" data-i="${i}"><span>${i===0?"오늘":i===1?"내일":l.w}</span><b>${l.md}</b><span class="dot ${lv>=0?"d"+lv:""}"></span></button>`}).join("");
   $("tabs").querySelectorAll(".tab").forEach(b=>b.onclick=()=>{day=+b.dataset.i;open.clear();render()});
   // 최근 공식 발표 변화(24시간)
-  const recent=(D.changeLog||[]).filter(c=>Date.now()-Date.parse(c.at)<864e5).slice(0,4);
-  $("alert").innerHTML=recent.length?`<div class="alert ${recent.every(c=>c.outcome!=="cancelled")?"ok":""}"><b>새 공식 발표</b>${recent.map(c=>`<span>${lab(c.date).md} ${c.time} ${esc(c.vessel)} ${esc(c.port)} · ${c.from?esc(c.from)+" → ":""}<b>${esc(c.to)}</b></span>`).join("")}</div>`:"";
+  const recent=(D.changeLog||[]).filter(c=>Date.now()-Date.parse(c.at)<864e5);
+  const byDate={};for(const c of recent)(byDate[c.date]||=[]).push(c);
+  const lines=Object.entries(byDate).sort().map(([d,cs])=>{const seen=new Set();cs=cs.filter(c=>{const k=c.time+c.vessel+c.port;if(seen.has(k))return false;seen.add(k);return true});
+    const bad=cs.filter(c=>c.outcome==="cancelled"||c.outcome==="pending"),ok=cs.filter(c=>c.outcome==="operated").length,off=cs.filter(c=>c.outcome==="nonoperating").length;
+    return {bad:bad.length>0,html:`<span><b>${lab(d).md}</b> ${[ok?`운항 ${ok}편`:"",bad.length?`<b>${bad.map(c=>`${c.time} ${esc(c.vessel)} ${esc(c.to)}${c.reason?"("+esc(c.reason)+")":""}`).join(", ")}</b>`:"",off?`비운항 ${off}편`:""].filter(Boolean).join(" · ")}</span>`}});
+  $("alert").innerHTML=lines.length?`<div class="alert ${lines.some(l=>l.bad)?"":"ok"}"><b>새 공식 발표</b>${lines.map(l=>l.html).join("")}</div>`:"";
   renderList();if(view==="why")renderWhy();
 }
 function renderList(){
