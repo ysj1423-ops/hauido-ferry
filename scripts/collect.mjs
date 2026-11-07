@@ -65,7 +65,7 @@ async function komsaDay(date) {
       const j = await get(`${base}?${keyPart}&${q}`);
       const resp = j.response || j;
       const code = resp?.header?.resultCode;
-      if (code && !["00", "0", "0000", "200", "INFO-000"].includes(String(code)) && String(code) !== "03") {
+      if (code && !["00", "0", "0000", "200", "INFO-000"].includes(String(code)) && !["03", "153"].includes(String(code))) {
         throw new Error(`API ${code} ${resp.header.resultMsg || ""}`);
       }
       let items = resp?.body?.items?.item ?? resp?.body?.items ?? [];
