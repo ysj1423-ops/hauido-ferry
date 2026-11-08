@@ -52,7 +52,7 @@ function classify(s = "") {
   if (/통제|결항/.test(s)) return "cancelled";
   if (/비운/.test(s)) return "nonoperating";
   if (/검토|대기|지연/.test(s)) return "pending";
-  if (/정상|운항/.test(s)) return "operated";
+  if (/정상|운항|증선|증회/.test(s)) return "operated";
   return "unknown";
 }
 const fmtTime = t => { t = String(t || "").replace(/[^0-9]/g, "").padStart(4, "0"); return t.slice(0, 2) + ":" + t.slice(2, 4); };
@@ -187,9 +187,11 @@ const kmaFor = (periods, date, hour) => {
 const P = CFG.point;
 async function omForecast() {
   const models = ["best_match", "ecmwf_ifs025", "kma_seamless", "gfs_seamless"];
-  const w = await get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=8`);
-  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height&timezone=Asia%2FSeoul&forecast_days=8&cell_selection=sea`);
+  const w = await get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=8`);
+  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&forecast_days=8&cell_selection=sea`);
   const idx = new Map(m.hourly.time.map((t, i) => [t, m.hourly.wave_height[i]]));
+  const sst = new Map(m.hourly.time.map((t, i) => [t, m.hourly.sea_surface_temperature?.[i]]));
+  const B = k => w.hourly[`${k}_best_match`] ?? w.hourly[k];
   const out = {};
   for (const mod of models) {
     const sfx = k => w.hourly[`${k}_${mod}`] ?? (mod === "best_match" ? w.hourly[k] : null);
@@ -197,41 +199,68 @@ async function omForecast() {
     const gs = sfx("wind_gusts_10m"), vs = sfx("visibility");
     const best_vs = w.hourly.visibility_best_match || w.hourly.visibility;
     out[mod] = {};
-    w.hourly.time.forEach((t, i) => { out[mod][t] = { wind: ws[i], gust: gs?.[i], vis: (vs?.[i] ?? best_vs?.[i]), wave: idx.get(t) }; });
+    const fogVal = (k, i) => sfx(k)?.[i] ?? B(k)?.[i];
+    w.hourly.time.forEach((t, i) => { out[mod][t] = { wind: ws[i], gust: gs?.[i], vis: (vs?.[i] ?? best_vs?.[i]), wave: idx.get(t),
+      temp: fogVal("temperature_2m", i), dew: fogVal("dew_point_2m", i), rh: fogVal("relative_humidity_2m", i), cloudLow: fogVal("cloud_cover_low", i), sst: sst.get(t) }; });
   }
   return out;
 }
 async function omHistory(start, end) {
-  const w = await get(`https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}`);
-  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}&cell_selection=sea`);
+  const w = await get(`https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}`);
+  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}&cell_selection=sea`);
   const idx = new Map(m.hourly.time.map((t, i) => [t, m.hourly.wave_height[i]]));
-  const out = {};
-  w.hourly.time.forEach((t, i) => { out[t] = { wind: w.hourly.wind_speed_10m[i], gust: w.hourly.wind_gusts_10m[i], vis: w.hourly.visibility[i], wave: idx.get(t) }; });
+  const sst = new Map(m.hourly.time.map((t, i) => [t, m.hourly.sea_surface_temperature?.[i]]));
+  const out = {}, H = w.hourly;
+  H.time.forEach((t, i) => { out[t] = { wind: H.wind_speed_10m[i], gust: H.wind_gusts_10m[i], vis: H.visibility[i], wave: idx.get(t),
+    temp: H.temperature_2m[i], dew: H.dew_point_2m[i], rh: H.relative_humidity_2m[i], cloudLow: H.cloud_cover_low[i], sst: sst.get(t) }; });
   return out;
 }
 // 출항 1시간 전 ~ 2시간 후 구간의 가장 나쁜 값
 function omFeat(hourly, date, time) {
   if (!hourly) return null;
+  const at = h => { const d = h < 0 ? addDays(date, -1) : h > 23 ? addDays(date, 1) : date; const hh = ((h % 24) + 24) % 24; return hourly[`${d}T${String(hh).padStart(2, "0")}:00`]; };
   const h0 = +time.slice(0, 2); let wind = null, gust = null, wave = null, vis = null;
   for (let h = h0 - 1; h <= h0 + 2; h++) {
-    const d = h < 0 ? addDays(date, -1) : h > 23 ? addDays(date, 1) : date;
-    const hh = ((h % 24) + 24) % 24;
-    const x = hourly[`${d}T${String(hh).padStart(2, "0")}:00`]; if (!x) continue;
+    const x = at(h); if (!x) continue;
     if (x.wind != null) wind = Math.max(wind ?? -1, x.wind);
     if (x.gust != null) gust = Math.max(gust ?? -1, x.gust);
     if (x.wave != null) wave = Math.max(wave ?? -1, x.wave);
     if (x.vis != null) vis = Math.min(vis ?? 1e9, x.vis);
   }
-  return wind == null ? null : { wind, gust, wave, vis };
+  if (wind == null) return null;
+  // 안개 요인: 출항 3시간 전 ~ 2시간 후
+  let dewDep = null, rh = null, airSea = null, cl = [], wl = [];
+  for (let h = h0 - 3; h <= h0 + 2; h++) {
+    const x = at(h); if (!x) continue;
+    if (x.temp != null && x.dew != null) dewDep = Math.min(dewDep ?? 99, x.temp - x.dew);
+    if (x.rh != null) rh = Math.max(rh ?? 0, x.rh);
+    if (x.temp != null && x.sst != null) airSea = Math.max(airSea ?? -99, x.temp - x.sst);
+    if (x.cloudLow != null) cl.push(x.cloudLow);
+    if (x.wind != null) wl.push(x.wind);
+  }
+  const avg = a => a.length ? a.reduce((p, c) => p + c, 0) / a.length : null;
+  const doy = (Date.parse(date + "T00:00:00Z") - Date.parse(date.slice(0, 4) + "-01-01T00:00:00Z")) / 864e5;
+  return { wind, gust, wave, vis, dewDep, rh, airSea, cloudLow: avg(cl), windMean: avg(wl),
+    season: Math.cos(2 * Math.PI * (doy - 191) / 365), morning: h0 < 9 ? 1 : 0 };
 }
 
 // ---------- 4. 모델: 로지스틱 회귀 (배별 절편 + 공통 기울기) ----------
 const visLog = v => v == null ? null : Math.log10(Math.max(v, 50) / 1000);
 const FEATS = {
-  full: ["wind", "gust", "wave", "visLog", "kmaWind", "kmaWave"],
-  om: ["wind", "gust", "wave", "visLog"],
+  full: ["wind", "gust", "wave", "visLog", "kmaWind", "kmaWave", "windEx", "gustEx", "kmaRough"],
+  om: ["wind", "gust", "wave", "visLog", "windEx", "gustEx"],
+  fog: ["visLog", "dewDep", "rh", "airSea", "cloudLow", "windMean", "season", "morning"],
 };
-const FEAT_KO = { wind: "모델 풍속", gust: "모델 돌풍", wave: "모델 파고", visLog: "시정", kmaWind: "기상청 풍속", kmaWave: "기상청 파고" };
+// 문턱 효과: 일정 세기를 넘는 만큼만 커지는 값, 기상청 예보가 주의보 수준인지
+const addEx = r => Object.assign(r, { windEx: r.wind == null ? null : Math.max(0, r.wind - 9), gustEx: r.gust == null ? null : Math.max(0, r.gust - 13),
+  kmaRough: r.kmaWind == null ? null : ((r.kmaWind >= 13 || (r.kmaWave ?? 0) >= 2.5) ? 1 : 0) });
+const isFog = r => /시계|안개|시정/.test(r.reason || "");
+function fogRule(r) { // 안개 학습 자료가 부족할 때만
+  if (r.vis != null && r.vis < 1000) return 0.5;
+  if (r.dewDep != null && r.dewDep < 1 && (r.windMean ?? 9) < 5) return 0.15;
+  return 0.02;
+}
+const FEAT_KO = { windEx: "강풍 초과분", gustEx: "돌풍 초과분", kmaRough: "기상청 주의보 수준", dewDep: "이슬점 차", rh: "습도", airSea: "기온-수온 차", cloudLow: "낮은 구름", windMean: "평균 풍속", season: "계절(여름)", morning: "아침 시간", wind: "모델 풍속", gust: "모델 돌풍", wave: "모델 파고", visLog: "시정", kmaWind: "기상청 풍속", kmaWave: "기상청 파고" };
 function featVec(r, names, stats, vessels) {
   const x = names.map((n, i) => r[n] == null ? 0 : (r[n] - stats.mean[i]) / stats.sd[i]);
   for (const v of vessels) x.push(r.vesselId === v ? 1 : 0);
@@ -243,16 +272,33 @@ function fitLogit(rows, names) {
   const sd = names.map((n, i) => { const v = rows.map(r => r[n]).filter(x => x != null); const s = Math.sqrt(v.reduce((a, b) => a + (b - mean[i]) ** 2, 0) / Math.max(1, v.length)); return s || 1; });
   const stats = { mean, sd };
   const X = rows.map(r => featVec(r, names, stats, vessels)), Y = rows.map(r => r.y);
-  const d = X[0].length; let w = new Array(d).fill(0);
-  const lam = 0.02, lr = 0.3, n = X.length;
-  for (let it = 0; it < 1500; it++) {
-    const g = new Array(d).fill(0);
-    for (let i = 0; i < n; i++) { const p = sig(dot(w, X[i])); const e = p - Y[i]; for (let j = 0; j < d; j++) g[j] += e * X[i][j]; }
-    for (let j = 0; j < d; j++) w[j] -= lr * (g[j] / n + (j < names.length ? lam * w[j] : 0));
+  // 뉴턴법(IRLS) + 약한 L2 규제
+  const d = X[0].length, n = X.length, lam = +(process.env.LAMBDA ?? 1);
+  let w = new Array(d).fill(0);
+  for (let it = 0; it < 30; it++) {
+    const H = Array.from({ length: d }, () => new Array(d).fill(0)), g = new Array(d).fill(0);
+    for (let i = 0; i < n; i++) {
+      const p = sig(dot(w, X[i])), q = Math.max(p * (1 - p), 1e-6), e = Y[i] - p, x = X[i];
+      for (let a = 0; a < d; a++) { if (!x[a]) continue; g[a] += e * x[a]; const qa = q * x[a]; for (let b = 0; b < d; b++) if (x[b]) H[a][b] += qa * x[b]; }
+    }
+    for (let a = 0; a < d; a++) { H[a][a] += lam + 1e-6; g[a] -= lam * w[a]; }
+    const step = solve(H, g); let mx = 0;
+    for (let a = 0; a < d; a++) { w[a] += step[a]; mx = Math.max(mx, Math.abs(step[a])); }
+    if (mx < 1e-6) break;
   }
   return { names, vessels, stats, w };
 }
 const sig = z => 1 / (1 + Math.exp(-z));
+function solve(A, b) { // 가우스 소거
+  const n = b.length, M = A.map((r, i) => [...r, b[i]]);
+  for (let c = 0; c < n; c++) {
+    let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+    [M[c], M[p]] = [M[p], M[c]];
+    const v = M[c][c] || 1e-12;
+    for (let r = 0; r < n; r++) if (r !== c) { const f = M[r][c] / v; if (f) for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k]; }
+  }
+  return M.map((r, i) => r[n] / (r[i] || 1e-12));
+}
 const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 function predict(model, r) {
   if (!model) return null;
@@ -317,24 +363,31 @@ function evaluate(rows, pfn) {
   let omHist = null;
   if (histDates.length) omHist = await source("omHist", "Open-Meteo 과거 예보 아카이브", () => omHistory(addDays(histDates[0], -1), addDays(TODAY, -1)));
 
-  // 4) 학습 자료 만들기
-  const train = [];
+  // 4) 학습 자료 만들기: 바람·파도 결항과 안개(시계제한) 결항을 따로 학습
+  for (const r of actRows) if (r.status) r.outcome = classify(r.status);
+  const all = [];
   for (const r of actRows) {
     if (r.date >= TODAY || !["cancelled", "operated"].includes(r.outcome)) continue;
     const f = omFeat(omHist, r.date, r.time); if (!f) continue;
     const k = kmaFor(kmaArc[compact(addDays(r.date, -1)) + "1700"] || [], r.date, +r.time.slice(0, 2));
-    train.push({ date: r.date, time: r.time, vesselId: r.vesselId, port: r.port, y: r.outcome === "cancelled" ? 1 : 0,
-      wind: f.wind, gust: f.gust, wave: f.wave, vis: f.vis, visLog: visLog(f.vis), kmaWind: k?.windMax ?? null, kmaWave: k?.waveMax ?? null });
+    all.push({ date: r.date, time: r.time, vesselId: r.vesselId, port: r.port, reason: r.reason, cancelled: r.outcome === "cancelled",
+      ...f, visLog: visLog(f.vis), kmaWind: k?.windMax ?? null, kmaWave: k?.waveMax ?? null });
+    addEx(all.at(-1));
   }
-  train.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
-  const positives = train.filter(r => r.y).length;
+  all.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  // 바람·파도 모델: 안개 결항은 빼고 학습
+  const train = all.filter(r => !(r.cancelled && isFog(r))).map(r => ({ ...r, y: r.cancelled ? 1 : 0 }));
+  // 안개 모델: 바람·파도 결항은 빼고 학습 (배와 무관하게 공통)
+  const trainFog = all.filter(r => !(r.cancelled && !isFog(r))).map(r => ({ ...r, vesselId: "all", y: r.cancelled ? 1 : 0 }));
+  const positives = train.filter(r => r.y).length, fogPositives = trainFog.filter(r => r.y).length;
   const enough = positives >= 8 && train.length >= 200;
+  const enoughFog = fogPositives >= 10 && trainFog.length >= 300;
 
   // 시간순 검증: 앞 70% 날짜로 학습, 뒤 30%로 평가
-  let validation = null, models = {};
+  let validation = null, fogValidation = null, models = {};
+  const ds = [...new Set(all.map(r => r.date))];
+  const cut = ds[Math.floor(ds.length * 0.7)];
   if (enough) {
-    const ds = [...new Set(train.map(r => r.date))];
-    const cut = ds[Math.floor(ds.length * 0.7)];
     const tr = train.filter(r => r.date < cut), te = train.filter(r => r.date >= cut);
     if (tr.filter(r => r.y).length >= 5 && te.length) {
       const mFull = fitLogit(tr, FEATS.full), mOm = fitLogit(tr, FEATS.om);
@@ -349,6 +402,16 @@ function evaluate(rows, pfn) {
     }
     models.full = fitLogit(train, FEATS.full);
     models.om = fitLogit(train, FEATS.om);
+  }
+  if (enoughFog) {
+    const tr = trainFog.filter(r => r.date < cut), te = trainFog.filter(r => r.date >= cut);
+    if (tr.filter(r => r.y).length >= 5 && te.length) {
+      const mFog = fitLogit(tr, FEATS.fog);
+      const baseRate = tr.reduce((s, r) => s + r.y, 0) / tr.length;
+      fogValidation = { trainFrom: tr[0].date, trainTo: tr.at(-1).date, testFrom: te[0].date, testTo: te.at(-1).date,
+        model: evaluate(te, r => predict(mFog, r)), visRule: evaluate(te, fogRule), baseRate: evaluate(te, () => baseRate) };
+    }
+    models.fog = fitLogit(trainFog, FEATS.fog);
   }
 
   // 배별 실적 요약
@@ -382,15 +445,23 @@ function evaluate(rows, pfn) {
     const sailings = sch.list.map(s => {
       const hour = +s.time.slice(0, 2);
       const k = kmaNow ? kmaFor(kmaNow.periods, date, hour) : null;
-      const feats = {}, probs = {};
-      if (omNow) for (const [mod, hourly] of Object.entries(omNow)) {
-        const f = omFeat(hourly, date, s.time); if (!f) continue;
-        feats[mod] = f;
-        const r = { vesselId: s.vesselId, ...f, visLog: visLog(f.vis), kmaWind: k?.windMax ?? null, kmaWave: k?.waveMax ?? null };
-        probs[mod] = enough ? predict(k ? models.full : models.om, r) : ruleProb(r);
+      const feats = {}, probs = {}, windProbs = {};
+      let fogP = null, fogF = null;
+      if (omNow) {
+        const fb = omFeat(omNow.best_match || Object.values(omNow)[0], date, s.time);
+        if (fb) { fogF = fb; const r = { ...fb, vesselId: "all", visLog: visLog(fb.vis) }; fogP = enoughFog ? predict(models.fog, r) : fogRule(r); }
+        for (const [mod, hourly] of Object.entries(omNow)) {
+          const f = omFeat(hourly, date, s.time); if (!f) continue;
+          feats[mod] = f;
+          const r = addEx({ vesselId: s.vesselId, ...f, visLog: visLog(f.vis), kmaWind: k?.windMax ?? null, kmaWave: k?.waveMax ?? null });
+          const pw = enough ? predict(k ? models.full : models.om, r) : ruleProb(r);
+          windProbs[mod] = pw;
+          probs[mod] = pw == null ? null : 1 - (1 - pw) * (1 - (fogP ?? 0));
+        }
       }
       const main = feats.best_match || Object.values(feats)[0] || null;
       const pv = Object.values(probs).filter(p => p != null);
+      const pWind = windProbs.best_match ?? null;
       const p = probs.best_match ?? (pv.length ? pv.reduce((a, b) => a + b, 0) / pv.length : (k ? ruleProb({ kmaWind: k.windMax, kmaWave: k.waveMax }) : null));
       // 비슷한 과거 배편
       let similar = [];
@@ -405,7 +476,9 @@ function evaluate(rows, pfn) {
       return {
         time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, out: s.port === "목포", route: s.route, approx: !!s.approx, via: s.via || null,
         official: s.official,
-        p: p == null ? null : rd(p, 3), pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
+        p: p == null ? null : rd(p, 3), pWind: rd(pWind, 3), pFog: rd(fogP, 3),
+        fog: fogF ? { visKm: fogF.vis == null ? null : rd(fogF.vis / 1000), dewDep: rd(fogF.dewDep), rh: rd(fogF.rh, 0), airSea: rd(fogF.airSea), cloudLow: rd(fogF.cloudLow, 0), wind: rd(fogF.windMean) } : null,
+        pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
         byModel: Object.fromEntries(Object.entries(probs).map(([m, v]) => [MODEL_NAMES[m] || m, v == null ? null : rd(v, 3)])),
         weather: main ? { wind: rd(main.wind), gust: rd(main.gust), wave: rd(main.wave), visKm: main.vis == null ? null : rd(main.vis / 1000) } : null,
         kma: k ? { wind: `${k.windMin}~${k.windMax}`, wave: `${k.waveMin}~${k.waveMax}`, sky: k.sky, part: k.part } : null,
@@ -452,6 +525,8 @@ function evaluate(rows, pfn) {
       trainRows: train.length, trainCancelled: positives, trainFrom: train[0]?.date || null, trainTo: train.at(-1)?.date || null,
       weights: enough ? Object.fromEntries(models.full.names.map((n, i) => [FEAT_KO[n], rd(models.full.w[i], 3)])) : null,
       validation,
+      fog: { mode: enoughFog ? "학습 모델" : "기본 규칙(학습 자료 부족)", trainRows: trainFog.length, trainCancelled: fogPositives,
+        weights: enoughFog ? Object.fromEntries(models.fog.names.map((n, i) => [FEAT_KO[n] || n, rd(models.fog.w[i], 3)])) : null, validation: fogValidation },
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },

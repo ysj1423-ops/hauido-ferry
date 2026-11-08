@@ -53,6 +53,10 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .stats span{display:inline-flex;align-items:center;gap:5px}
 .stats i{width:8px;height:8px;border-radius:50%;display:inline-block}
 .stats .wx{color:var(--muted)}
+.firsts{display:grid;gap:2px;font-size:.88rem}
+.first b{font-family:var(--m);font-weight:600}
+.first small{color:var(--muted)}
+.fogtag{color:var(--sea)}
 .stats .wx b{color:var(--ink);font-family:var(--m);font-weight:600}
 .sail{background:var(--card);border:1px solid var(--line);border-radius:12px}
 .sail>button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:28px 58px 1fr auto;gap:10px;align-items:center;padding:12px;cursor:pointer}
@@ -70,7 +74,8 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .who span{font-size:.8rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .chip{display:grid;justify-items:end;gap:1px;text-align:right}
 .chip .s{font-weight:700;font-size:.88rem;padding:3px 10px;border-radius:999px;white-space:nowrap}
-.chip .p{font-family:var(--m);font-size:.75rem;color:var(--muted)}
+.chip .p{font-family:var(--m);font-size:.72rem;color:var(--muted);max-width:118px;line-height:1.3}
+.who b{white-space:nowrap}
 .s.go{color:var(--go);background:var(--go-bg)}.s.warn{color:var(--warn);background:var(--warn-bg)}.s.stop{color:var(--stop);background:var(--stop-bg)}
 .s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--muted);background:var(--bg)}
 .more{border-top:1px solid var(--line);padding:12px;display:grid;gap:10px;font-size:.88rem}
@@ -188,8 +193,14 @@ function summary(d){
   const dotc=["var(--go)","var(--warn)","var(--stop)"];
   const items=[[0,offi?"운항":"운항 예상"],[1,offi?"검토":"주의"],[2,offi?"통제":"결항 위험"]].filter(([lv])=>n(lv)).map(([lv,t])=>`<span><i style="background:${dotc[lv]}"></i>${t} ${n(lv)}편</span>`);
   if(off)items.push(`<span><i style="background:var(--line)"></i>비운항 ${off}편</span>`);
+  const firstOf=f=>d.sailings.filter(f).sort((a,b)=>a.time.localeCompare(b.time))[0];
+  const fb=[firstOf(s=>isOut(s)),firstOf(s=>!isOut(s))].filter(Boolean).map(s=>{
+    const v=verdict(s);
+    const txt=s.official?esc(v.txt):`결항 ${pct(s.p)}${s.pFog!=null?` <small>(안개 ${pct(s.pFog)})</small>`:""}`;
+    return `<span class="first"><b>${s.time}</b> ${esc(s.port)} 첫배 · ${txt}</span>`}).join("");
   return `<div class="sum"><div class="h"><b>${l.md} (${l.w})</b><span>${basis}</span></div>
     <div class="stats">${items.join("")}</div>
+    ${fb?`<div class="firsts">${fb}</div>`:""}
     <div class="stats"><span class="wx">최대 풍속 <b>${mx("wind")??"–"}</b> m/s</span><span class="wx">파고 <b>${mx("wave")??"–"}</b> m</span>${k?`<span class="wx">기상청 ${esc(k.sky)}</span>`:""}</div></div>`;
 }
 function renderList(){
@@ -197,7 +208,7 @@ function renderList(){
   let ss=d.sailings.filter(s=>dir==="all"||(dir==="out")===isOut(s));
   const far=day>=3;
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
-    const sub=s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`);
+    const sub=s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
@@ -216,6 +227,8 @@ function detail(s){
   return `<div class="more">${viaNote}
     <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
     ${k?`<div><span class="lbl">기상청 해상예보(${esc(D.kmaZone)}, ${esc(k.part)})</span><br>풍속 ${esc(k.wind)} m/s · 파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 단기 해상예보 범위 밖(4일 이후)</div>`}
+    ${s.pWind!=null||s.pFog!=null?`<div><span class="lbl">결항 원인별 확률</span><br>바람·파도 ${pct(s.pWind)} · 안개 ${pct(s.pFog)}</div>`:""}
+    ${s.fog?`<div><span class="lbl">안개 요인 (출항 3시간 전~2시간 후)</span><div class="kv fogkv"><div><small>이슬점 차</small><b>${s.fog.dewDep??"–"}</b> ℃</div><div><small>습도</small><b>${s.fog.rh??"–"}</b> %</div><div><small>기온−수온</small><b>${s.fog.airSea??"–"}</b> ℃</div><div><small>낮은 구름</small><b>${s.fog.cloudLow??"–"}</b> %</div></div><span class="lbl">이슬점 차가 0에 가깝고 습도가 높으며 바람이 약할수록, 따뜻한 공기가 찬 바다 위로 올 때(기온−수온이 +) 바다 안개가 잘 낍니다.</span></div>`:""}
     ${models?`<div><span class="lbl">예보 모델별 결항 확률</span><br>${models}</div>`:""}
     ${sim.length?`<div><span class="lbl">이 배의 비슷한 날씨 과거 사례 (빨강 = 결항)</span><div class="past">${sim.map(x=>`<span class="y${x.y}" title="풍속 ${x.wind} · 파고 ${x.wave}">${x.date.slice(2)} ${x.time}</span>`).join("")}</div></div>`:""}
   </div>`;
@@ -237,6 +250,13 @@ function renderWhy(){
     ${row("이 사이트 모델",v.full)}${row("모델(기상청 제외)",v.omOnly)}${row("기상청 예보 규칙",v.kmaRule)}${row("평소 결항 비율",v.baseRate)}</table></div>
     <p class="lbl">오차는 Brier 점수(0에 가까울수록 정확). 결항 포착 = 실제 결항 중 미리 50% 이상으로 본 비율.</p>`
    :`<p>과거 실적이 아직 충분히 모이지 않았습니다. 자료가 쌓이면 자동으로 검증 결과가 나옵니다. (수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일)</p>`}
+  </section>
+  <section class="panel"><h2>안개 결항 예측</h2>
+    <p>KOMSA 확정 실적에서 '시계제한'으로 통제된 배편만 따로 모아 학습합니다. 시정 예보, 이슬점 차, 습도, 기온과 바다 수온 차이, 낮은 구름, 바람, 계절, 아침 시간을 씁니다. 화면의 결항 확률은 바람·파도와 안개 중 하나라도 일어날 확률입니다.</p>
+    <p class="lbl">현재: ${esc(m.fog?.mode||"–")} · 학습 배편 ${m.fog?.trainRows??0}편(안개 통제 ${m.fog?.trainCancelled??0}편)</p>
+    ${m.fog?.validation?`<div class="tw"><table><tr><th>방법</th><th>오차↓</th><th>결항 포착</th><th>경보 적중</th><th>놓침</th><th>헛경보</th></tr>
+      ${row("안개 모델",m.fog.validation.model)}${row("시정 예보 1km 규칙",m.fog.validation.visRule)}${row("평소 안개 결항 비율",m.fog.validation.baseRate)}</table></div>
+      <p class="lbl">검증 기간 ${m.fog.validation.testFrom}~${m.fog.validation.testTo}. 안개 결항은 주로 6~8월에 몰려 있어, 지난 여름 자료가 다 모여야 검증 숫자가 의미 있어집니다.</p>`:""}
   </section>
   ${vs.length?`<section class="panel"><h2>배별 실적 (KOMSA 확정 운항실적)</h2><div class="tw"><table><tr><th>배</th><th>정상</th><th>통제</th><th>비운항</th><th>자료 시작</th></tr>
     ${vs.map(x=>`<tr><td>${esc(x.vessel)}</td><td>${x.operated}</td><td>${x.cancelled}</td><td>${x.nonoperating}</td><td>${x.from??"–"}</td></tr>`).join("")}</table></div>
