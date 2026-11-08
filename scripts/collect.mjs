@@ -323,7 +323,7 @@ function omFeat(hourly, date, time) {
   }
   const avg = a => a.length ? a.reduce((p, c) => p + c, 0) / a.length : null;
   const doy = (Date.parse(date + "T00:00:00Z") - Date.parse(date.slice(0, 4) + "-01-01T00:00:00Z")) / 864e5;
-  return { wind, gust, wave, vis, dewDep, rh, airSea, cloudLow: avg(cl), windMean: avg(wl),
+  return { wind, gust, wave, vis, dewDep, rh, airSea, airSeaPos: airSea == null ? null : Math.max(0, airSea), seaFogIdx: (airSea == null || dewDep == null) ? null : Math.max(0, airSea) * (dewDep < 2 ? 1 : 0.3), cloudLow: avg(cl), windMean: avg(wl),
     season: Math.cos(2 * Math.PI * (doy - 191) / 365), morning: h0 < 9 ? 1 : 0 };
 }
 
@@ -332,11 +332,19 @@ const visLog = v => v == null ? null : Math.log10(Math.max(v, 50) / 1000);
 const FEATS = {
   full: ["wind", "gust", "wave", "visLog", "kmaWind", "kmaWave", "windEx", "gustEx", "kmaRough"],
   om: ["wind", "gust", "wave", "visLog", "windEx", "gustEx"],
-  fog: ["visLog", "dewDep", "rh", "airSea", "cloudLow", "windMean", "season", "morning"],
+  fog: (process.env.FOGF || "visLog,dewDep,rh,airSea,cloudLow,windMean,season,morning").split(","),
 };
 // 문턱 효과: 일정 세기를 넘는 만큼만 커지는 값, 기상청 예보가 주의보 수준인지
 const addEx = r => Object.assign(r, { windEx: r.wind == null ? null : Math.max(0, r.wind - 9), gustEx: r.gust == null ? null : Math.max(0, r.gust - 13),
   kmaRough: r.kmaWind == null ? null : ((r.kmaWind >= 13 || (r.kmaWave ?? 0) >= 2.5) ? 1 : 0) });
+// 달별 안개 결항 비율(앞뒤 달 포함, 전체 평균 쪽으로 당겨 안정화) → 로짓 기준값
+function monthPrior(rows) {
+  const n = new Array(12).fill(0), k = new Array(12).fill(0);
+  for (const r of rows) { const m = +r.date.slice(5, 7) - 1; n[m]++; k[m] += r.y; }
+  const all = k.reduce((a, b) => a + b, 0) / Math.max(1, n.reduce((a, b) => a + b, 0));
+  const rate = n.map((_, m) => { let nn = 0, kk = 0; for (const [d, wt] of [[-1, .5], [0, 1], [1, .5]]) { const j = (m + d + 12) % 12; nn += n[j] * wt; kk += k[j] * wt; } return (kk + 150 * all) / (nn + 150); });
+  return { rate, fn: r => { const p = Math.min(Math.max(rate[+r.date.slice(5, 7) - 1], 1e-4), 0.5); return Math.log(p / (1 - p)); } };
+}
 const isFog = r => /시계|안개|시정/.test(r.reason || "");
 function fogRule(r) { // 안개 학습 자료가 부족할 때만
   if (r.vis != null && r.vis < 1000) return 0.5;
@@ -349,19 +357,19 @@ function featVec(r, names, stats, vessels) {
   for (const v of vessels) x.push(r.vesselId === v ? 1 : 0);
   return x;
 }
-function fitLogit(rows, names) {
+function fitLogit(rows, names, lamOverride) {
   const vessels = [...new Set(rows.map(r => r.vesselId))];
   const mean = names.map(n => { const v = rows.map(r => r[n]).filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0; });
   const sd = names.map((n, i) => { const v = rows.map(r => r[n]).filter(x => x != null); const s = Math.sqrt(v.reduce((a, b) => a + (b - mean[i]) ** 2, 0) / Math.max(1, v.length)); return s || 1; });
   const stats = { mean, sd };
   const X = rows.map(r => featVec(r, names, stats, vessels)), Y = rows.map(r => r.y);
   // 뉴턴법(IRLS) + 약한 L2 규제
-  const d = X[0].length, n = X.length, lam = +(process.env.LAMBDA ?? 1);
+  const d = X[0].length, n = X.length, lam = lamOverride ?? +(process.env.LAMBDA ?? 1);
   let w = new Array(d).fill(0);
   for (let it = 0; it < 30; it++) {
     const H = Array.from({ length: d }, () => new Array(d).fill(0)), g = new Array(d).fill(0);
     for (let i = 0; i < n; i++) {
-      const p = sig(dot(w, X[i])), q = Math.max(p * (1 - p), 1e-6), e = Y[i] - p, x = X[i];
+      const p = sig(dot(w, X[i]) + (rows[i].offset || 0)), q = Math.max(p * (1 - p), 1e-6), e = Y[i] - p, x = X[i];
       for (let a = 0; a < d; a++) { if (!x[a]) continue; g[a] += e * x[a]; const qa = q * x[a]; for (let b = 0; b < d; b++) if (x[b]) H[a][b] += qa * x[b]; }
     }
     for (let a = 0; a < d; a++) { H[a][a] += lam + 1e-6; g[a] -= lam * w[a]; }
@@ -386,7 +394,7 @@ const dot = (a, b) => a.reduce((s, v, i) => s + v * b[i], 0);
 function predict(model, r) {
   if (!model) return null;
   if (!model.vessels.includes(r.vesselId)) return null;
-  return sig(dot(model.w, featVec(r, model.names, model.stats, model.vessels)));
+  return sig(dot(model.w, featVec(r, model.names, model.stats, model.vessels)) + (model.offsetFn ? model.offsetFn(r) : 0));
 }
 function ruleProb(r) { // 자료가 부족할 때만: 풍랑주의보 기준(14 m/s, 3 m) 근처
   const w = r.kmaWind ?? r.wind, h = r.kmaWave ?? r.wave;
@@ -491,12 +499,16 @@ function evaluate(rows, pfn) {
   if (enoughFog) {
     const tr = trainFog.filter(r => r.date < cut), te = trainFog.filter(r => r.date >= cut);
     if (tr.filter(r => r.y).length >= 5 && te.length) {
-      const mFog = fitLogit(tr, FEATS.fog);
+      const mpT = monthPrior(tr); tr.forEach(r => r.offset = mpT.fn(r));
+      const mFog = fitLogit(tr, FEATS.fog, +(process.env.FOGLAM ?? 1)); mFog.offsetFn = mpT.fn;
+      const mPrior = { names: [], vessels: ["all"], stats: { mean: [], sd: [] }, w: [0], offsetFn: mpT.fn };
       const baseRate = tr.reduce((s, r) => s + r.y, 0) / tr.length;
       fogValidation = { trainFrom: tr[0].date, trainTo: tr.at(-1).date, testFrom: te[0].date, testTo: te.at(-1).date,
-        model: evaluate(te, r => predict(mFog, r)), visRule: evaluate(te, fogRule), baseRate: evaluate(te, () => baseRate) };
+        model: evaluate(te, r => predict(mFog, r)), monthOnly: evaluate(te, r => predict(mPrior, r)), visRule: evaluate(te, fogRule), baseRate: evaluate(te, () => baseRate) };
     }
-    models.fog = fitLogit(trainFog, FEATS.fog);
+    const mp = monthPrior(trainFog); trainFog.forEach(r => r.offset = mp.fn(r));
+    models.fog = fitLogit(trainFog, FEATS.fog, +(process.env.FOGLAM ?? 1)); models.fog.offsetFn = mp.fn; models.fogMonthRate = mp.rate;
+    trainFog.forEach(r => delete r.offset);
   }
 
   // 배별 실적 요약
@@ -534,7 +546,7 @@ function evaluate(rows, pfn) {
       let fogP = null, fogF = null;
       if (omNow) {
         const fb = omFeat(omNow.best_match || Object.values(omNow)[0], date, s.time);
-        if (fb) { fogF = fb; const r = { ...fb, vesselId: "all", visLog: visLog(fb.vis) }; fogP = enoughFog ? predict(models.fog, r) : fogRule(r); }
+        if (fb) { fogF = fb; const r = { ...fb, date, vesselId: "all", visLog: visLog(fb.vis) }; fogP = enoughFog ? predict(models.fog, r) : fogRule(r); }
         for (const [mod, hourly] of Object.entries(omNow)) {
           const f = omFeat(hourly, date, s.time); if (!f) continue;
           feats[mod] = f;
