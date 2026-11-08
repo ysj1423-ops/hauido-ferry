@@ -287,7 +287,8 @@ function evaluate(rows, pfn) {
   await source("komsaConfirmed", "KOMSA 확정 운항실적", async () => {
     const missing = [];
     for (let i = 3; i <= CFG.historyDays; i++) { const d = addDays(TODAY, -i); if (!act.done[d]) missing.push(d); }
-    for (const d of [addDays(TODAY, -1), addDays(TODAY, -2), ...missing.slice(0, CFG.backfillPerRun)]) {
+    const backfill = process.env.BACKFILL === "0" ? 0 : CFG.backfillPerRun;
+    for (const d of [addDays(TODAY, -1), addDays(TODAY, -2), ...missing.slice(0, backfill)]) {
       const rows = await komsaConfirmed(d);
       for (const k of Object.keys(act.rows)) if (k.startsWith(d + "|")) delete act.rows[k];
       for (const r of rows) act.rows[`${r.date}|${r.time}|${r.vessel}|${r.port}`] = r;
