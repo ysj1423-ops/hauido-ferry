@@ -59,8 +59,10 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .dir{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--sea-bg);color:var(--sea)}
 .dir svg{width:15px;height:15px}
 .dir.in{transform:scaleX(-1)}
-.t.approx::before{content:"약 ";font-family:var(--f);font-size:.7rem;font-weight:500;color:var(--muted)}
-.via{font-size:.72rem;color:var(--sea);background:var(--sea-bg);border-radius:4px;padding:0 5px;margin-left:4px;font-weight:500}
+.t{white-space:nowrap}
+.t.approx{color:var(--muted)}
+.t.approx::after{content:"예상 시각";display:block;font-family:var(--f);font-size:.62rem;font-weight:500;line-height:1}
+.who .via{display:inline;font-size:.68rem;vertical-align:1px;color:var(--sea);background:var(--sea-bg);border-radius:4px;padding:0 5px;margin-left:4px;font-weight:500}
 .sail>button:focus-visible{outline:2px solid var(--sea);border-radius:12px}
 .t{font-family:var(--m);font-size:1.25rem;font-weight:600;font-variant-numeric:tabular-nums}
 .who{min-width:0}
@@ -83,7 +85,7 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .far{font-size:.72rem;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;padding:24px 0}
 nav.bottom{display:flex;gap:2px}
-nav.bottom button{border:0;background:transparent;color:var(--muted);font:inherit;padding:8px;border-bottom:2px solid transparent;cursor:pointer}
+nav.bottom button{white-space:nowrap;border:0;background:transparent;color:var(--muted);font:inherit;padding:8px;border-bottom:2px solid transparent;cursor:pointer}
 nav.bottom button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink);font-weight:700}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;font-size:.9rem}
 .panel h2{font-size:1rem;margin:0}
@@ -99,7 +101,7 @@ td:first-child{font-family:var(--f)}
 a{color:var(--sea)}
 code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px}
 .btn{border:1px solid var(--sea);color:var(--sea);background:transparent;border-radius:8px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;justify-self:start}
-@media (max-width:420px){.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:24px 52px 1fr auto;gap:8px}.dir{width:24px;height:24px}.t{font-size:1.1rem}}
+@media (max-width:420px){h1 small{display:none}.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:24px 52px 1fr auto;gap:8px}.dir{width:24px;height:24px}.t{font-size:1.1rem}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -200,7 +202,7 @@ function renderList(){
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
       <span class="t ${s.approx?"approx":""}">${s.time}</span>
-      <span class="who"><b>${esc(s.vessel)}${s.via?`<span class="via">순환</span>`:""}</b><span>${esc(s.port)} → ${esc(dest)}${s.via?` · ${s.via} 목포 출발편`:""}</span></span>
+      <span class="who"><b>${esc(s.vessel)}${s.via?`<span class="via">순환</span>`:""}</b><span>${esc(s.port)} → ${esc(dest)}${s.via?` · ${s.via}편`:""}</span></span>
       <span class="chip"><span class="s ${v.cls}">${esc(v.txt)}</span><span class="p">${sub}${far&&!s.official?" · 먼 예보":""}</span></span>
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
   $("list").innerHTML=summary(d)+(cards||`<p class="empty">배편이 없습니다</p>`);

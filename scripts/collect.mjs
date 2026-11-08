@@ -80,7 +80,7 @@ async function komsaTomorrow() {
   const h = await komsaPage("https://komsa.or.kr/prog/tmmrwSailing/kor/sub03_0207/list.do?searchJbcd=F");
   const t = h.replace(/<[^>]+>/g, " ");
   const m = /적용일\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(t);
-  if (!m) throw new Error("운항예보 적용일 없음");
+  if (!m) return { date: null, updated: null, rows: [] }; // 발표 전
   const date = `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
   const up = /최종 업데이트 시간\s*:\s*([0-9:]+)/.exec(t)?.[1] || null;
   // [출항시간, 출항지명, 항로명, 여객선명, 운항구분, 사유] — 같은 표가 화면에 두 번 나와 중복 제거
@@ -137,6 +137,7 @@ function expandRoundTrips(list, date, rt, isToday) {
     const stops = RT.routes[s.route];
     if (!stops || s.port !== "목포" || !rtVessels.has(s.vessel)) continue;
     if (s.trip && !/왕복|순환/.test(s.trip)) continue;
+    if (s.official?.outcome === "nonoperating") continue;
     for (const port of stops) {
       const actual = isToday ? rt.today[`${s.vessel}|${s.time}|${port}`] : null;
       const off = rt.offsets[port] ?? RT.defaultOffsetMin[port];
