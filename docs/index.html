@@ -91,7 +91,9 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .who b{white-space:nowrap}
 .s.go{color:var(--go);background:var(--go-bg)}.s.warn{color:var(--warn);background:var(--warn-bg)}.s.stop{color:var(--stop);background:var(--stop-bg)}
 .s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--muted);background:var(--bg)}
-.more{border-top:1px solid var(--line);padding:12px;display:grid;gap:10px;font-size:.88rem}
+.more{border-top:1px solid var(--line);padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;font-size:.88rem}
+.more>div{min-width:0}
+.sail{min-width:0}
 .kv{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .kv div{background:var(--bg);border-radius:8px;padding:6px 8px}
 .kv small{display:block;color:var(--muted);font-size:.72rem}
