@@ -332,7 +332,7 @@ const visLog = v => v == null ? null : Math.log10(Math.max(v, 50) / 1000);
 const FEATS = {
   full: ["wind", "gust", "wave", "visLog", "kmaWind", "kmaWave", "windEx", "gustEx", "kmaRough"],
   om: ["wind", "gust", "wave", "visLog", "windEx", "gustEx"],
-  fog: (process.env.FOGF || "visLog,dewDep,rh,airSea,cloudLow,windMean,season,morning").split(","),
+  fog: ["visLog", "rh", "windMean", "airSeaPos", "morning"],
 };
 // 문턱 효과: 일정 세기를 넘는 만큼만 커지는 값, 기상청 예보가 주의보 수준인지
 const addEx = r => Object.assign(r, { windEx: r.wind == null ? null : Math.max(0, r.wind - 9), gustEx: r.gust == null ? null : Math.max(0, r.gust - 13),
@@ -345,13 +345,14 @@ function monthPrior(rows) {
   const rate = n.map((_, m) => { let nn = 0, kk = 0; for (const [d, wt] of [[-1, .5], [0, 1], [1, .5]]) { const j = (m + d + 12) % 12; nn += n[j] * wt; kk += k[j] * wt; } return (kk + 150 * all) / (nn + 150); });
   return { rate, fn: r => { const p = Math.min(Math.max(rate[+r.date.slice(5, 7) - 1], 1e-4), 0.5); return Math.log(p / (1 - p)); } };
 }
+const FOG_LAMBDA = 5; // 안개 결항은 드물어서 규제를 세게
 const isFog = r => /시계|안개|시정/.test(r.reason || "");
 function fogRule(r) { // 안개 학습 자료가 부족할 때만
   if (r.vis != null && r.vis < 1000) return 0.5;
   if (r.dewDep != null && r.dewDep < 1 && (r.windMean ?? 9) < 5) return 0.15;
   return 0.02;
 }
-const FEAT_KO = { windEx: "강풍 초과분", gustEx: "돌풍 초과분", kmaRough: "기상청 주의보 수준", dewDep: "이슬점 차", rh: "습도", airSea: "기온-수온 차", cloudLow: "낮은 구름", windMean: "평균 풍속", season: "계절(여름)", morning: "아침 시간", wind: "모델 풍속", gust: "모델 돌풍", wave: "모델 파고", visLog: "시정", kmaWind: "기상청 풍속", kmaWave: "기상청 파고" };
+const FEAT_KO = { airSeaPos: "바다안개 조건(기온>수온)", windEx: "강풍 초과분", gustEx: "돌풍 초과분", kmaRough: "기상청 주의보 수준", dewDep: "이슬점 차", rh: "습도", airSea: "기온-수온 차", cloudLow: "낮은 구름", windMean: "평균 풍속", season: "계절(여름)", morning: "아침 시간", wind: "모델 풍속", gust: "모델 돌풍", wave: "모델 파고", visLog: "시정", kmaWind: "기상청 풍속", kmaWave: "기상청 파고" };
 function featVec(r, names, stats, vessels) {
   const x = names.map((n, i) => r[n] == null ? 0 : (r[n] - stats.mean[i]) / stats.sd[i]);
   for (const v of vessels) x.push(r.vesselId === v ? 1 : 0);
@@ -500,14 +501,14 @@ function evaluate(rows, pfn) {
     const tr = trainFog.filter(r => r.date < cut), te = trainFog.filter(r => r.date >= cut);
     if (tr.filter(r => r.y).length >= 5 && te.length) {
       const mpT = monthPrior(tr); tr.forEach(r => r.offset = mpT.fn(r));
-      const mFog = fitLogit(tr, FEATS.fog, +(process.env.FOGLAM ?? 1)); mFog.offsetFn = mpT.fn;
+      const mFog = fitLogit(tr, FEATS.fog, FOG_LAMBDA); mFog.offsetFn = mpT.fn;
       const mPrior = { names: [], vessels: ["all"], stats: { mean: [], sd: [] }, w: [0], offsetFn: mpT.fn };
       const baseRate = tr.reduce((s, r) => s + r.y, 0) / tr.length;
       fogValidation = { trainFrom: tr[0].date, trainTo: tr.at(-1).date, testFrom: te[0].date, testTo: te.at(-1).date,
         model: evaluate(te, r => predict(mFog, r)), monthOnly: evaluate(te, r => predict(mPrior, r)), visRule: evaluate(te, fogRule), baseRate: evaluate(te, () => baseRate) };
     }
     const mp = monthPrior(trainFog); trainFog.forEach(r => r.offset = mp.fn(r));
-    models.fog = fitLogit(trainFog, FEATS.fog, +(process.env.FOGLAM ?? 1)); models.fog.offsetFn = mp.fn; models.fogMonthRate = mp.rate;
+    models.fog = fitLogit(trainFog, FEATS.fog, FOG_LAMBDA); models.fog.offsetFn = mp.fn; models.fogMonthRate = mp.rate.map(x => rd(x * 100, 2));
     trainFog.forEach(r => delete r.offset);
   }
 
@@ -625,7 +626,8 @@ function evaluate(rows, pfn) {
       weights: enough ? Object.fromEntries(models.full.names.map((n, i) => [FEAT_KO[n], rd(models.full.w[i], 3)])) : null,
       validation,
       fog: { mode: enoughFog ? "학습 모델" : "기본 규칙(학습 자료 부족)", trainRows: trainFog.length, trainCancelled: fogPositives,
-        weights: enoughFog ? Object.fromEntries(models.fog.names.map((n, i) => [FEAT_KO[n] || n, rd(models.fog.w[i], 3)])) : null, validation: fogValidation },
+        weights: enoughFog ? Object.fromEntries(models.fog.names.map((n, i) => [FEAT_KO[n] || n, rd(models.fog.w[i], 3)])) : null, validation: fogValidation,
+        monthRatePct: models.fogMonthRate || null },
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },

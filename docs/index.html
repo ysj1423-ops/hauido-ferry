@@ -279,10 +279,11 @@ function renderWhy(){
    :`<p>과거 실적이 아직 충분히 모이지 않았습니다. 자료가 쌓이면 자동으로 검증 결과가 나옵니다. (수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일)</p>`}
   </section>
   <section class="panel"><h2>안개 결항 예측</h2>
-    <p>KOMSA 확정 실적에서 '시계제한'으로 통제된 배편만 따로 모아 학습합니다. 시정 예보, 이슬점 차, 습도, 기온과 바다 수온 차이, 낮은 구름, 바람, 계절, 아침 시간을 씁니다. 화면의 결항 확률은 바람·파도와 안개 중 하나라도 일어날 확률입니다.</p>
+    <p>KOMSA 확정 실적에서 '시계제한'으로 통제된 배편만 따로 모아, <b>그 달의 실제 안개 결항 비율</b>을 기준으로 삼고 날씨(시정 예보, 습도, 바람, 따뜻한 공기가 찬 바다 위로 오는 바다안개 조건, 아침 시간)에 따라 높이거나 낮춥니다. 화면의 결항 확률은 바람·파도와 안개 중 하나라도 일어날 확률입니다.</p>
+    ${m.fog?.monthRatePct?`<p class="lbl">달별 기준 비율(%): ${m.fog.monthRatePct.map((v,i)=>`${i+1}월 ${v}`).join(" · ")}</p>`:""}
     <p class="lbl">현재: ${esc(m.fog?.mode||"–")} · 학습 배편 ${m.fog?.trainRows??0}편(안개 통제 ${m.fog?.trainCancelled??0}편)</p>
     ${m.fog?.validation?`<div class="tw"><table><tr><th>방법</th><th>오차↓</th><th>결항 포착</th><th>경보 적중</th><th>놓침</th><th>헛경보</th></tr>
-      ${row("안개 모델",m.fog.validation.model)}${row("시정 예보 1km 규칙",m.fog.validation.visRule)}${row("평소 안개 결항 비율",m.fog.validation.baseRate)}</table></div>
+      ${row("안개 모델",m.fog.validation.model)}${row("달별 평소 비율만",m.fog.validation.monthOnly)}${row("시정 예보 1km 규칙",m.fog.validation.visRule)}${row("평소 안개 결항 비율",m.fog.validation.baseRate)}</table></div>
       <p class="lbl">검증 기간 ${m.fog.validation.testFrom}~${m.fog.validation.testTo}. 안개 결항은 주로 6~8월에 몰려 있어, 지난 여름 자료가 다 모여야 검증 숫자가 의미 있어집니다.</p>`:""}
   </section>
   ${vs.length?`<section class="panel"><h2>배별 실적 (KOMSA 확정 운항실적)</h2><div class="tw"><table><tr><th>배</th><th>정상</th><th>통제</th><th>비운항</th><th>자료 시작</th></tr>
