@@ -1,11 +1,12 @@
 name: collect
-# GitHub 예약 실행은 몇 시간씩 늦어질 수 있어서, 한 번 시작되면 약 3시간 동안 반복 확인한다.
-# 11:50~15:00, 16:50~17:40(한국 시각)은 5분 간격, 그 외 15분 간격.
+# 한 번 실행에 한 번만 수집한다(같은 사이트를 짧은 간격으로 반복 호출하지 않음).
+# 30분마다 + KOMSA 발표 직후(12:10, 14:10, 17:10 한국 시각) 한 번씩.
 on:
   schedule:
-    - cron: "7 * * * *"
-    - cron: "45 2 * * *"   # 11:45 KST
-    - cron: "45 7 * * *"   # 16:45 KST
+    - cron: "*/30 * * * *"
+    - cron: "10 3 * * *"   # 12:10 KST
+    - cron: "10 5 * * *"   # 14:10 KST
+    - cron: "10 8 * * *"   # 17:10 KST
   workflow_dispatch:
 permissions:
   contents: write
@@ -15,35 +16,21 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 200
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Collect loop
+      - name: Collect and predict
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: node scripts/collect.mjs
+      - name: Commit data
         run: |
           git config user.name "ferry-bot"
           git config user.email "ferry-bot@users.noreply.github.com"
-          end=$((SECONDS + 175*60))
-          last_push=0
-          first=1
-          while [ $SECONDS -lt $end ]; do
-            before=$(node scripts/official-fingerprint.mjs)
-            if [ $first = 1 ]; then BACKFILL=1 node scripts/collect.mjs || true; else BACKFILL=0 node scripts/collect.mjs || true; fi
-            first=0
-            after=$(node scripts/official-fingerprint.mjs)
-            if [ "$before" != "$after" ] || [ $((SECONDS - last_push)) -ge 1700 ] || [ $last_push = 0 ]; then
-              git add docs/data
-              if ! git diff --cached --quiet; then
-                git commit -q -m "data: $(TZ=Asia/Seoul date +%m-%d\ %H:%M) KST"
-                for i in 1 2 3; do git pull -q --rebase -X theirs origin main && git push -q && break; sleep 5; done
-                last_push=$SECONDS
-              fi
-            fi
-            hm=$(TZ=Asia/Seoul date +%H%M)
-            if { [ $hm -ge 1150 ] && [ $hm -lt 1500 ]; } || { [ $hm -ge 1650 ] && [ $hm -lt 1740 ]; }; then sleep 300; else sleep 900; fi
-          done
+          git add docs/data
+          git diff --cached --quiet || git commit -q -m "data: $(TZ=Asia/Seoul date +%m-%d\ %H:%M) KST"
+          for i in 1 2 3; do git pull -q --rebase -X theirs origin main && git push -q && break; sleep 5; done
