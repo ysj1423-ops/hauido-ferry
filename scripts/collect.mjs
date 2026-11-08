@@ -112,18 +112,20 @@ async function apiEvents(date, vessel) {
   for (const t of Object.values(trips)) t.events.sort((a, b) => a.ts.localeCompare(b.ts));
   return trips;
 }
-// 배편 기록 → 들른 항구 순서와 각 항구 도착·출항 시각
+// 배편 기록 → 들른 항구 순서와 각 항구 도착·출항 시각 ('완료' 이후 기록은 버림, 같은 항구 재방문은 따로)
 function stopsOf(trip) {
   const stops = [];
   for (const e of trip.events) {
-    if (!e.port) continue;
+    if (!e.port) { if (/완료/.test(e.st) && stops.length) { stops.at(-1).arr ||= e.at; stops.at(-1).end = true; break; } continue; }
     let s = stops.at(-1);
     if (!s || s.port !== e.port) { s = { port: e.port, arr: null, dep: null }; stops.push(s); }
     if (/입항|도착|완료/.test(e.st) && !s.arr) s.arr = e.at;
     if (/출항/.test(e.st) && !s.dep) s.dep = e.at;
+    if (/완료/.test(e.st)) { s.end = true; break; }
   }
   return stops;
 }
+const signedMin = d => ((d + 720) % 1440 + 1440) % 1440 - 720;
 const median = a => { if (!a.length) return null; a = [...a].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
 async function movementInfo(prevRt) {
   const vessels = [...new Set([...CFG.vessels.map(v => v.name), ...RT.vessels])];
@@ -151,10 +153,10 @@ async function movementInfo(prevRt) {
       for (const r of runs) { const k = r.map(s => s.port).join(">"); seqCount[k] = (seqCount[k] || 0) + 1; }
       const best = Object.entries(seqCount).sort((a, b) => b[1] - a[1])[0][0].split(">");
       const via = key.split("|")[1];
-      patterns[key] = { dir, stops: best.map(port => {
+      patterns[key] = { dir, stops: best.map((port, idx) => {
         const arr = [], dep = [];
-        for (const r of runs) { const s = r.find(x => x.port === port); if (!s) continue;
-          if (s.arr) arr.push((toMin(s.arr) - toMin(via) + 1440) % 1440); if (s.dep) dep.push((toMin(s.dep) - toMin(via) + 1440) % 1440); }
+        for (const r of runs) { if (r.map(x => x.port).join(">") !== best.join(">")) continue; const s = r[idx];
+          if (s.arr) arr.push(signedMin(toMin(s.arr) - toMin(via))); if (s.dep) dep.push(signedMin(toMin(s.dep) - toMin(via))); }
         return { port, arr: median(arr), dep: median(dep) };
       }) };
     }
@@ -174,30 +176,30 @@ async function movementInfo(prevRt) {
 }
 // 현재 위치 문장 + 항구별 진행 상황(지난 곳은 실제 시각, 남은 곳은 예상 시각)
 function position(trip, stops, pat, via) {
-  const last = trip.events.at(-1);
+  const done = stops.some(s => s.end);
   const order = pat?.stops?.length ? pat.stops : stops.map(s => ({ port: s.port }));
-  // 지연: 마지막 실제 기록과 평소 시각의 차이
+  // 평소 순서와 실제 기록을 앞에서부터 차례로 맞춤 (같은 항구 재방문 구분)
+  let j = 0; const chain = [];
+  for (const o of order) {
+    let k = j; while (k < stops.length && stops[k].port !== o.port) k++;
+    if (k < stops.length) { const s = stops[k]; j = k + 1;
+      chain.push({ port: o.port, at: s.dep || s.arr, passed: !!s.dep || !!s.end, here: !s.dep && !s.end, plan: o }); }
+    else chain.push({ port: o.port, passed: false, here: false, plan: o });
+  }
+  // 지연: 가장 최근 실제 기록과 평소 시각 차이
   let delay = 0;
-  if (pat) for (const s of stops) { const p = pat.stops.find(x => x.port === s.port); const a = s.dep || s.arr; const pm = s.dep ? p?.dep : p?.arr;
-    if (p && a && pm != null) delay = (toMin(a) - toMin(via) + 1440) % 1440 - pm; }
-  const seen = new Set(stops.map(s => s.port));
-  const done = last && /완료/.test(last.st);
-  const chain = order.map(o => {
-    const s = stops.find(x => x.port === o.port);
-    if (s) return { port: o.port, at: s.dep || s.arr, passed: !!s.dep || (done && s.port === last.port), here: !s.dep && !(done && s.port === last.port) };
-    const eta = o.arr != null ? toHM((toMin(via) + o.arr + Math.max(0, delay) + 1440) % 1440) : null;
-    return { port: o.port, eta, passed: false, here: false };
-  });
-  for (const s of stops) if (!order.find(o => o.port === s.port)) chain.push({ port: s.port, at: s.dep || s.arr, passed: !!s.dep, here: !s.dep });
-  const next = chain.find(c => !seen.has(c.port));
-  let text;
-  if (!last) text = "출항 전";
-  else if (done) text = `${last.port} 도착 완료`;
-  else if (/기항지도착/.test(last.st)) text = `${last.port}에 정박 중`;
-  else if (/입항/.test(last.st)) text = `${last.port} 들어가는 중`;
-  else if (/미수신/.test(last.st)) text = `위치 신호 없음 (마지막: ${stops.at(-1)?.port || "-"})`;
-  else text = `${stops.at(-1)?.port || "출발지"} → ${next?.port || "다음 항구"} 가는 중`;
-  return { text, at: last?.at || null, state: !last ? "before" : done ? "done" : "moving", delay: Math.round(delay), chain };
+  for (const c of chain) if (c.at && c.plan) { const pm = c.passed && c.plan.dep != null ? c.plan.dep : c.plan.arr; if (pm != null) delay = signedMin(toMin(c.at) - toMin(via)) - pm; }
+  for (const c of chain) { if (!c.at && c.plan?.arr != null) c.eta = toHM(((toMin(via) + c.plan.arr + Math.max(0, delay)) % 1440 + 1440) % 1440); delete c.plan; }
+  const lastStop = stops.at(-1), lastEv = trip.events.filter(e => e.port || /완료/.test(e.st)).at(-1);
+  const nextIdx = chain.findIndex(c => !c.passed && !c.here);
+  const next = nextIdx >= 0 ? chain[nextIdx] : null;
+  let text, at = lastStop?.dep || lastStop?.arr || null;
+  if (!stops.length) text = "출항 전";
+  else if (done) { text = `${lastStop.port} 도착 완료`; at = lastStop.arr; }
+  else if (lastStop && !lastStop.dep) text = /입항/.test(trip.events.filter(e => e.port === lastStop.port).at(-1)?.st || "") ? `${lastStop.port} 들어가는 중` : `${lastStop.port}에 정박 중`;
+  else if (/미수신/.test(trip.events.at(-1)?.st || "")) text = `위치 신호 없음 (마지막: ${lastStop?.port || "-"})`;
+  else text = `${lastStop?.port || "출발지"} → ${next?.port || "다음 항구"} 가는 중`;
+  return { text, at, state: !stops.length ? "before" : done ? "done" : "moving", delay: Math.round(delay), chain };
 }
 // 목포 출발 왕복편 → 섬 출발편 추가 (공식 상태는 원래 배편을 따름)
 function expandRoundTrips(list, date, rt, isToday) {
