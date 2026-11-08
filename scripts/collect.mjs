@@ -7,6 +7,7 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..")
 const DATA = path.join(ROOT, "docs", "data");
 const CFG = JSON.parse(fs.readFileSync(path.join(ROOT, "config.json"), "utf8"));
 const NTFY = (process.env.NTFY_TOPIC || "").trim();
+const KEY = (process.env.DATA_GO_KR_KEY || "").trim();
 fs.mkdirSync(DATA, { recursive: true });
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(path.join(DATA, f), "utf8")); } catch { return d; } };
@@ -64,7 +65,7 @@ async function komsaConfirmed(date) {
   if (!/crtfctNaviTable/.test(h)) throw new Error("확정 운항실적 표 없음");
   // [출항시간, 항로명, 여객선명, 출항지, 편도/왕복, 운항구분, 사유, ...]
   return cellsOf(h).filter(c => ROUTES.includes(c[1])).map(c => ({
-    date, time: fmtTime(c[0]), route: c[1], vessel: c[2], vesselId: vid(c[2]), port: c[3], status: c[5], reason: c[6] || "", outcome: classify(c[5]) }));
+    date, time: fmtTime(c[0]), route: c[1], vessel: c[2], vesselId: vid(c[2]), port: c[3], trip: c[4], status: c[5], reason: c[6] || "", outcome: classify(c[5]) }));
 }
 async function komsaToday() {
   const h = await komsaPage("https://komsa.or.kr/prog/pssgCurState/kor/sub03_0202/list.do?jbcd=F");
@@ -72,7 +73,7 @@ async function komsaToday() {
   const rows = cellsOf(h).filter(c => c.length >= 10 && ROUTES.includes(c[9]));
   const m = /기준시간\s*(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(h.replace(/<[^>]+>/g, " "));
   const date = m ? `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}` : TODAY;
-  return { date, rows: rows.map(c => ({ date, time: fmtTime(c[0]), vessel: c[1], vesselId: vid(c[1]), detail: c[2], direction: c[3], port: c[4], route: c[9],
+  return { date, rows: rows.map(c => ({ date, time: fmtTime(c[0]), vessel: c[1], vesselId: vid(c[1]), detail: c[2], direction: c[3], port: c[4], trip: c[5], route: c[9],
     status: c[6], reason: c[7] || "", progress: c[8] || "", outcome: classify(c[6]) })) };
 }
 async function komsaTomorrow() {
@@ -90,6 +91,60 @@ async function komsaTomorrow() {
     rows.push({ date, time: fmtTime(c[0]), port: c[1], route: c[2], vessel: c[3], vesselId: vid(c[3]), status: c[4], reason: c[5] || "", outcome: classify(c[4]) });
   }
   return { date, updated: up, rows };
+}
+
+// ---------- 1-2. 왕복 배의 섬 출발 시각 (공공데이터포털 운항상태 API: 실제 움직임 기록) ----------
+const RT = CFG.roundTrip;
+const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+const toHM = m => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+async function apiMoves(date, vessel) {
+  const q = new URLSearchParams({ pageNo: "1", numOfRows: "1000", dataType: "JSON", rlvtYmd: compact(date), psnshpNm: vessel });
+  const keyPart = KEY.includes("%") ? "serviceKey=" + KEY : "serviceKey=" + encodeURIComponent(KEY);
+  const j = await get(`https://apis.data.go.kr/B554035/ferry-route-info-v4/get-ferry-route-info-v4?${keyPart}&${q}`);
+  const r = j.response || j; let it = r.body?.items?.item ?? r.body?.items ?? []; if (!Array.isArray(it)) it = it ? [it] : [];
+  // 섬 항구에서 '출항중'이 처음 찍힌 시각
+  const out = {};
+  for (const x of it) {
+    if (x.nvg_stts_nm !== "출항중" || !x.portcl_nm || !x.nvg_stts_chg_dt) continue;
+    const via = fmtTime(x.sail_tm), at = x.nvg_stts_chg_dt.slice(11, 16), k = `${via}|${x.portcl_nm}`;
+    if (!out[k] || at < out[k]) out[k] = at;
+  }
+  return out; // { "06:00|웅곡": "07:26", ... }
+}
+async function roundTripInfo(prevRt) {
+  if (!KEY) return { offsets: prevRt?.offsets || RT.defaultOffsetMin, basis: prevRt?.basis || "기본값", today: {} };
+  let offsets = prevRt?.offsets, basis = prevRt?.basis;
+  if (!prevRt || prevRt.computedOn !== TODAY) {
+    const samples = {};
+    for (let i = 1; i <= 7; i++) for (const v of RT.vessels) {
+      const mv = await apiMoves(addDays(TODAY, -i), v);
+      for (const [k, at] of Object.entries(mv)) { const [via, port] = k.split("|"); const d = toMin(at) - toMin(via); if (d > 0 && d < 240) (samples[port] ||= []).push(d); }
+      await sleep(200);
+    }
+    offsets = { ...RT.defaultOffsetMin };
+    for (const [port, a] of Object.entries(samples)) if (a.length >= 3) { a.sort((x, y) => x - y); offsets[port] = a[Math.floor(a.length / 2)]; }
+    basis = `최근 7일 실제 운항기록 중앙값 (${Object.entries(samples).map(([p, a]) => p + " " + a.length + "회").join(", ") || "기록 없음"})`;
+  }
+  const today = {};
+  for (const v of RT.vessels) Object.assign(today, Object.fromEntries(Object.entries(await apiMoves(TODAY, v)).map(([k, at]) => [v + "|" + k, at])));
+  return { offsets, basis, computedOn: TODAY, today };
+}
+// 목포 출발 왕복편 → 섬 출발편 추가 (공식 상태는 원래 배편을 따름)
+function expandRoundTrips(list, date, rt, isToday) {
+  const rtVessels = new Set(RT.vessels);
+  const extra = [];
+  for (const s of list) {
+    const stops = RT.routes[s.route];
+    if (!stops || s.port !== "목포" || !rtVessels.has(s.vessel)) continue;
+    if (s.trip && !/왕복|순환/.test(s.trip)) continue;
+    for (const port of stops) {
+      const actual = isToday ? rt.today[`${s.vessel}|${s.time}|${port}`] : null;
+      const off = rt.offsets[port] ?? RT.defaultOffsetMin[port];
+      extra.push({ ...s, port, time: actual || toHM(toMin(s.time) + off), approx: !actual, via: s.time,
+        official: s.official ? { ...s.official, progress: actual ? `${actual} 출항` : (s.official.progress === "완료" ? "완료" : ""), kind: s.official.kind } : null });
+    }
+  }
+  return [...list, ...extra].sort((a, b) => a.time.localeCompare(b.time));
 }
 
 // ---------- 2. 기상청 해상예보 (단기, 전남중부서해앞바다) ----------
@@ -227,6 +282,7 @@ function evaluate(rows, pfn) {
   const live = { today: null, tomorrow: null };
   live.today = await source("komsaToday", "KOMSA 당일 운항현황", komsaToday);
   live.tomorrow = await source("komsaTomorrow", "KOMSA 다음 날 운항예보", komsaTomorrow);
+  const rt = (await source("roundTrip", "왕복 배 섬 출발 시각(실제 운항기록)", () => roundTripInfo(prev?.roundTrip))) || { offsets: RT.defaultOffsetMin, basis: "기본값", today: {} };
   await source("komsaConfirmed", "KOMSA 확정 운항실적", async () => {
     const missing = [];
     for (let i = 3; i <= CFG.historyDays; i++) { const d = addDays(TODAY, -i); if (!act.done[d]) missing.push(d); }
@@ -320,6 +376,7 @@ function evaluate(rows, pfn) {
   const out = [];
   for (const date of days) {
     const sch = scheduleFor(date);
+    sch.list = expandRoundTrips(sch.list, date, rt, date === live.today?.date);
     const sailings = sch.list.map(s => {
       const hour = +s.time.slice(0, 2);
       const k = kmaNow ? kmaFor(kmaNow.periods, date, hour) : null;
@@ -344,7 +401,7 @@ function evaluate(rows, pfn) {
         }).sort((a, b) => a.d - b.d).slice(0, 8).map(({ r }) => ({ date: r.date, time: r.time, y: r.y, wind: rd(r.wind), wave: rd(r.wave), kmaWind: r.kmaWind, kmaWave: r.kmaWave }));
       }
       return {
-        time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, out: s.port === "목포", route: s.route,
+        time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, out: s.port === "목포", route: s.route, approx: !!s.approx, via: s.via || null,
         official: s.official,
         p: p == null ? null : rd(p, 3), pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
         byModel: Object.fromEntries(Object.entries(probs).map(([m, v]) => [MODEL_NAMES[m] || m, v == null ? null : rd(v, 3)])),
@@ -358,10 +415,10 @@ function evaluate(rows, pfn) {
 
   // 6) 공식 발표 변화 감지 + 알림
   const prevMap = new Map();
-  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, s.official.status);
+  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official && !s.via) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, s.official.status);
   const changes = [];
   if (prev) for (const d of out) for (const s of d.sailings) {
-    if (!s.official) continue;
+    if (!s.official || s.via) continue;
     const before = prevMap.get(`${d.date}|${s.vessel}|${s.time}|${s.port}`);
     if (before === s.official.status) continue;
     if (before === undefined && s.official.kind === "today") continue; // 날짜가 넘어가며 생긴 당일 목록은 제외
@@ -396,6 +453,7 @@ function evaluate(rows, pfn) {
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },
+    roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null },
     tomorrowIssued: live.tomorrow ? { date: live.tomorrow.date, updated: live.tomorrow.updated } : null,
   };
   writeJSON("latest.json", latest);

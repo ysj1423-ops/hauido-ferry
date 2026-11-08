@@ -20,6 +20,7 @@ jobs:
       - name: Collect and predict
         env:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
         run: node scripts/collect.mjs
       - name: Commit data
         run: |

@@ -10,21 +10,26 @@
 <style>
 /* 레이아웃: 상단 고정 바(날짜 탭) → 배편 목록(눌러서 펼침) → 근거 탭 */
 :root{
-  --bg:#f2f5f7; --card:#fff; --ink:#10212e; --muted:#5d6e7b; --line:#dbe3e8; --sea:#1d5d8a;
+  --bg:#f2f5f7; --card:#fff; --ink:#10212e; --muted:#5d6e7b; --line:#dbe3e8; --sea:#1d5d8a; --sea-bg:#e4eff7; --sea-2:#9cc3df;
   --go:#17784b; --go-bg:#e2f3ea; --warn:#9a6200; --warn-bg:#fcf0d6; --stop:#b42a20; --stop-bg:#fbe3e0;
   --f:"IBM Plex Sans KR",system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif; --m:"IBM Plex Mono",ui-monospace,Menlo,monospace;
 }
 @media (prefers-color-scheme:dark){:root{
-  --bg:#0d1720; --card:#15232e; --ink:#e5eef4; --muted:#93a6b4; --line:#273845; --sea:#72b4e2;
+  --bg:#0d1720; --card:#15232e; --ink:#e5eef4; --muted:#93a6b4; --line:#273845; --sea:#72b4e2; --sea-bg:#14293a; --sea-2:#2f5d7d;
   --go:#5fd09a; --go-bg:#173628; --warn:#ebb853; --warn-bg:#3b2f13; --stop:#f38c83; --stop-bg:#3f1d1a; color-scheme:dark}}
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f);-webkit-text-size-adjust:100%}
 .wrap{max-width:720px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px)) 40px max(16px,env(safe-area-inset-right,0px))}
 header .wrap{padding-bottom:0}
-header{position:sticky;top:0;z-index:5;background:var(--bg);padding-top:max(12px,env(safe-area-inset-top,0px));border-bottom:1px solid var(--line)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding-top:max(12px,env(safe-area-inset-top,0px))}
+header::after{content:"";display:block;height:8px;background:var(--wave) repeat-x;background-size:40px 8px;opacity:.9}
+:root{--wave:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='8'%3E%3Cpath d='M0 5 Q10 0 20 5 T40 5' fill='none' stroke='%239cc3df' stroke-width='1.6'/%3E%3C/svg%3E")}
+.brand{display:flex;align-items:center;gap:8px}
+.brand svg{width:26px;height:26px;flex:none}
 .top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-h1{font-size:1.25rem;margin:0}
+h1{font-size:1.25rem;margin:0;letter-spacing:-.01em}
+h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;letter-spacing:0}
 .upd{font-size:.78rem;color:var(--muted)}
 .tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0;scrollbar-width:none}
 .tabs::-webkit-scrollbar{display:none}
@@ -39,8 +44,23 @@ h1{font-size:1.25rem;margin:0}
 .alert{margin-top:12px;border-radius:10px;padding:10px 12px;background:var(--stop-bg);color:var(--stop);font-size:.9rem;display:grid;gap:2px}
 .alert.ok{background:var(--go-bg);color:var(--go)}
 .list{display:grid;gap:8px}
+.sum{background:var(--sea-bg);border-radius:14px;padding:14px 16px;display:grid;gap:8px;position:relative;overflow:hidden}
+.sum::after{content:"";position:absolute;left:0;right:0;bottom:0;height:8px;background:var(--wave) repeat-x;background-size:40px 8px;opacity:.7}
+.sum .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}
+.sum .h b{font-size:1.05rem}
+.sum .h span{font-size:.78rem;color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:.88rem;padding-bottom:4px}
+.stats span{display:inline-flex;align-items:center;gap:5px}
+.stats i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.stats .wx{color:var(--muted)}
+.stats .wx b{color:var(--ink);font-family:var(--m);font-weight:600}
 .sail{background:var(--card);border:1px solid var(--line);border-radius:12px}
-.sail>button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:62px 1fr auto;gap:10px;align-items:center;padding:12px;cursor:pointer}
+.sail>button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:28px 58px 1fr auto;gap:10px;align-items:center;padding:12px;cursor:pointer}
+.dir{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--sea-bg);color:var(--sea)}
+.dir svg{width:15px;height:15px}
+.dir.in{transform:scaleX(-1)}
+.t.approx::before{content:"약 ";font-family:var(--f);font-size:.7rem;font-weight:500;color:var(--muted)}
+.via{font-size:.72rem;color:var(--sea);background:var(--sea-bg);border-radius:4px;padding:0 5px;margin-left:4px;font-weight:500}
 .sail>button:focus-visible{outline:2px solid var(--sea);border-radius:12px}
 .t{font-family:var(--m);font-size:1.25rem;font-weight:600;font-variant-numeric:tabular-nums}
 .who{min-width:0}
@@ -79,14 +99,14 @@ td:first-child{font-family:var(--f)}
 a{color:var(--sea)}
 code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px}
 .btn{border:1px solid var(--sea);color:var(--sea);background:transparent;border-radius:8px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;justify-self:start}
-@media (max-width:420px){.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:54px 1fr auto}}
+@media (max-width:420px){.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:24px 52px 1fr auto;gap:8px}.dir{width:24px;height:24px}.t{font-size:1.1rem}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <header>
   <div class="wrap">
-    <div class="top"><h1>하의도 배편</h1>
+    <div class="top"><div class="brand"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="16" fill="var(--sea)"/><path d="M8 18h16l-2.6 4.2H10.6z" fill="var(--card)"/><path d="M12 17v-4h6l2 4z" fill="var(--card)" opacity=".85"/><path d="M15 13v-3h2v3z" fill="var(--card)"/><path d="M6 24.5q2.5-1.6 5 0t5 0 5 0 5 0" stroke="var(--sea-2)" stroke-width="1.4" fill="none"/></svg><h1>하의도 배편<small>목포 ⇄ 하의·신의</small></h1></div>
       <nav class="bottom"><button data-view="ships" aria-pressed="true">배편</button><button data-view="why" aria-pressed="false">근거·알림</button></nav></div>
     <div class="upd" id="upd">불러오는 중</div>
     <div class="tabs" id="tabs" role="tablist" aria-label="날짜"></div>
@@ -154,25 +174,44 @@ function render(){
   $("alert").innerHTML=lines.length?`<div class="alert ${lines.some(l=>l.bad)?"":"ok"}"><b>새 공식 발표</b>${lines.map(l=>l.html).join("")}</div>`:"";
   renderList();if(view==="why")renderWhy();
 }
+const ARROW=`<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+function summary(d){
+  const vs=d.sailings.map(verdict);
+  const n=k=>vs.filter(v=>v.lv===k).length, off=d.sailings.filter(s=>s.official?.outcome==="nonoperating").length;
+  const offi=d.sailings.some(s=>s.official);
+  const mx=k=>{const a=d.sailings.map(s=>s.weather?.[k]).filter(x=>x!=null);return a.length?Math.max(...a):null};
+  const k=d.sailings.find(s=>s.kma)?.kma;
+  const l=lab(d.date);
+  const basis=offi?(d.sailings.some(s=>s.official?.kind==="today")?"KOMSA 당일 현황":"KOMSA 다음 날 운항예보"):"예상 · 공식 발표 전";
+  const dotc=["var(--go)","var(--warn)","var(--stop)"];
+  const items=[[0,offi?"운항":"운항 예상"],[1,offi?"검토":"주의"],[2,offi?"통제":"결항 위험"]].filter(([lv])=>n(lv)).map(([lv,t])=>`<span><i style="background:${dotc[lv]}"></i>${t} ${n(lv)}편</span>`);
+  if(off)items.push(`<span><i style="background:var(--line)"></i>비운항 ${off}편</span>`);
+  return `<div class="sum"><div class="h"><b>${l.md} (${l.w})</b><span>${basis}</span></div>
+    <div class="stats">${items.join("")}</div>
+    <div class="stats"><span class="wx">최대 풍속 <b>${mx("wind")??"–"}</b> m/s</span><span class="wx">파고 <b>${mx("wave")??"–"}</b> m</span>${k?`<span class="wx">기상청 ${esc(k.sky)}</span>`:""}</div></div>`;
+}
 function renderList(){
   const d=D.days[day];if(!d){$("list").innerHTML="";return}
   let ss=d.sailings.filter(s=>dir==="all"||(dir==="out")===isOut(s));
-  if(!ss.length){$("list").innerHTML=`<p class="empty">배편이 없습니다</p>`;return}
   const far=day>=3;
-  $("list").innerHTML=ss.map((s,i)=>{const v=verdict(s);const id=d.date+s.time+s.vesselId;
+  const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const sub=s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`);
+    const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
-      <span class="t">${s.time}</span>
-      <span class="who"><b>${esc(s.vessel)}</b><span>${esc(s.port)} 출발 · ${esc(s.route.replace("목포-",""))}행</span></span>
+      <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
+      <span class="t ${s.approx?"approx":""}">${s.time}</span>
+      <span class="who"><b>${esc(s.vessel)}${s.via?`<span class="via">순환</span>`:""}</b><span>${esc(s.port)} → ${esc(dest)}${s.via?` · ${s.via} 목포 출발편`:""}</span></span>
       <span class="chip"><span class="s ${v.cls}">${esc(v.txt)}</span><span class="p">${sub}${far&&!s.official?" · 먼 예보":""}</span></span>
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
+  $("list").innerHTML=summary(d)+(cards||`<p class="empty">배편이 없습니다</p>`);
   $("list").querySelectorAll(".sail>button").forEach(b=>b.onclick=()=>{const id=b.dataset.id;open.has(id)?open.delete(id):open.add(id);renderList()});
 }
 function detail(s){
   const w=s.weather||{},k=s.kma;
   const models=Object.entries(s.byModel||{}).filter(([,v])=>v!=null).map(([m,v])=>`${m} ${pct(v)}`).join(" · ");
   const sim=(s.similar||[]);
-  return `<div class="more">
+  const viaNote=s.via?`<div class="lbl">${esc(s.vessel)}는 목포에서 ${s.via}에 출발해 섬을 돌고 목포로 돌아오는 순환편입니다. ${s.approx?"섬 출발 시각은 최근 실제 운항기록 기준 예상 시각입니다.":"표시된 시각은 오늘 실제 출항 기록입니다."} 운항 여부는 ${s.via} 목포 출발편과 같습니다.</div>`:"";
+  return `<div class="more">${viaNote}
     <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
     ${k?`<div><span class="lbl">기상청 해상예보(${esc(D.kmaZone)}, ${esc(k.part)})</span><br>풍속 ${esc(k.wind)} m/s · 파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 단기 해상예보 범위 밖(4일 이후)</div>`}
     ${models?`<div><span class="lbl">예보 모델별 결항 확률</span><br>${models}</div>`:""}
