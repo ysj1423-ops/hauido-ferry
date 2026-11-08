@@ -253,6 +253,14 @@ async function kmaLatest() {
   for (const g of got) for (const p of g.periods) { const key = p.date + p.part; if (!merged.has(key)) merged.set(key, { ...p, annc: g.annc }); }
   return { annc: got[0].annc, periods: [...merged.values()] };
 }
+// 기상청 중기 해상예보(서해남부, 4~10일). 과거 발표분 조회가 안 되어 받을 때마다 저장해 둔다.
+async function kmaMid() {
+  const j = await get(`https://marine.kma.go.kr/mmis_marine_api/v1/kma/fct/sea/lterm/detail?annc_time=${compact(TODAY)}0600&zone_id=${CFG.kmaMidZone.id}`);
+  return (j.data || []).map(d => {
+    const m = /(\d{4})\.(\d{2})\.(\d{2})\s*(오전|오후)?/.exec(d.ef_nm || "");
+    return m ? { date: `${m[1]}-${m[2]}-${m[3]}`, part: m[4] || "종일", waveMin: d.wh_min_val, waveMax: d.wh_max_val, sky: d.sky_sts_nm } : null;
+  }).filter(Boolean);
+}
 const kmaFor = (periods, date, hour) => {
   const part = hour < 12 ? "오전" : "오후";
   return periods.find(p => p.date === date && p.part === part) || periods.find(p => p.date === date && p.part === "종일") || null;
@@ -419,6 +427,8 @@ function evaluate(rows, pfn) {
 
   // 2) 기상청 해상예보: 최신 + 과거 발표분(학습용, 전날 17시 발표)
   const kmaNow = await source("kma", "기상청 단기 해상예보", kmaLatest);
+  const kmaMidNow = await source("kmaMid", "기상청 중기 해상예보(서해남부)", kmaMid);
+  if (kmaMidNow?.length) { const arc = readJSON("kma-mid-archive.json", {}); arc[TODAY] ||= kmaMidNow; writeJSON("kma-mid-archive.json", arc); }
   await source("kmaArchive", "기상청 해상예보 과거 발표분", async () => {
     const dates = [...new Set(Object.values(act.rows).map(r => r.date))].filter(d => d < TODAY).sort().reverse();
     let n = 0;
@@ -557,7 +567,8 @@ function evaluate(rows, pfn) {
         pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
         byModel: Object.fromEntries(Object.entries(probs).map(([m, v]) => [MODEL_NAMES[m] || m, v == null ? null : rd(v, 3)])),
         weather: main ? { wind: rd(main.wind), gust: rd(main.gust), wave: rd(main.wave), visKm: main.vis == null ? null : rd(main.vis / 1000) } : null,
-        kma: k ? { wind: `${k.windMin}~${k.windMax}`, wave: `${k.waveMin}~${k.waveMax}`, sky: k.sky, part: k.part } : null,
+        kma: k ? { wind: `${k.windMin}~${k.windMax}`, wave: `${k.waveMin}~${k.waveMax}`, waveMax: k.waveMax, sky: k.sky, part: k.part, kind: "단기", area: CFG.kmaZone.name }
+          : (() => { const m = kmaMidNow && kmaFor(kmaMidNow, date, hour); return m ? { wind: null, wave: `${m.waveMin}~${m.waveMax}`, waveMax: m.waveMax, sky: m.sky, part: m.part, kind: "중기", area: CFG.kmaMidZone.name } : null; })(),
         similar,
       };
     });

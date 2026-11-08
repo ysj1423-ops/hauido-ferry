@@ -208,6 +208,8 @@ function summary(d){
   const offi=d.sailings.some(s=>s.official);
   const mx=k=>{const a=d.sailings.map(s=>s.weather?.[k]).filter(x=>x!=null);return a.length?Math.max(...a):null};
   const k=d.sailings.find(s=>s.kma)?.kma;
+  const kw=d.sailings.map(s=>s.kma?.waveMax).filter(x=>x!=null);
+  const kmaWave=kw.length?Math.max(...kw):null;
   const l=lab(d.date);
   const basis=offi?(d.sailings.some(s=>s.official?.kind==="today")?"KOMSA 당일 현황":"KOMSA 다음 날 운항예보"):"예상 · 공식 발표 전";
   const dotc=["var(--go)","var(--warn)","var(--stop)"];
@@ -222,7 +224,7 @@ function summary(d){
     <div class="stats">${items.join("")}</div>
     ${fb?`<div class="firsts">${fb}</div>`:""}
     ${atSea(d)}
-    <div class="stats"><span class="wx">최대 풍속 <b>${mx("wind")??"–"}</b> m/s</span><span class="wx">파고 <b>${mx("wave")??"–"}</b> m</span>${k?`<span class="wx">기상청 ${esc(k.sky)}</span>`:""}</div></div>`;
+    <div class="stats"><span class="wx">모델 최대 풍속 <b>${mx("wind")??"–"}</b> m/s</span>${kmaWave!=null?`<span class="wx">기상청 파고 최대 <b>${kmaWave}</b> m <small>(${esc(k.area)} ${esc(k.kind)})</small></span>`:""}${k?`<span class="wx">${esc(k.sky)}</span>`:""}<span class="wx">항로 지점 모델 파고 <b>${mx("wave")??"–"}</b> m</span></div></div>`;
 }
 function renderList(){
   const d=D.days[day];if(!d){$("list").innerHTML="";return}
@@ -250,8 +252,8 @@ function detail(s){
   const chain=L&&L.chain&&L.chain.length?`<div><span class="lbl">운항 진행 (${L.at?esc(L.at)+" 기록":"출항 전"}${L.delay>=5?` · 평소보다 ${L.delay}분 늦음`:""})</span>
     <ol class="chain">${L.chain.map(c=>`<li class="${c.passed?"done":c.here?"here":""}"><i></i><span>${esc(c.port)}</span><small>${c.at?esc(c.at):c.eta?"약 "+esc(c.eta):""}</small></li>`).join("")}</ol></div>`:"";
   return `<div class="more">${viaNote}${chain}
-    <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
-    ${k?`<div><span class="lbl">기상청 해상예보(${esc(D.kmaZone)}, ${esc(k.part)})</span><br>풍속 ${esc(k.wind)} m/s · 파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 단기 해상예보 범위 밖(4일 이후)</div>`}
+    <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>지점 모델 파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
+    ${k?`<div><span class="lbl">기상청 ${esc(k.kind)} 해상예보 (${esc(k.area)}, ${esc(k.part)})</span><br>${k.wind?`풍속 ${esc(k.wind)} m/s · `:""}파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 해상예보 범위 밖</div>`}
     ${s.pWind!=null||s.pFog!=null?`<div><span class="lbl">결항 원인별 확률</span><br>바람·파도 ${pct(s.pWind)} · 안개 ${pct(s.pFog)}</div>`:""}
     ${s.fog?`<div><span class="lbl">안개 요인 (출항 3시간 전~2시간 후)</span><div class="kv fogkv"><div><small>이슬점 차</small><b>${s.fog.dewDep??"–"}</b> ℃</div><div><small>습도</small><b>${s.fog.rh??"–"}</b> %</div><div><small>기온−수온</small><b>${s.fog.airSea??"–"}</b> ℃</div><div><small>낮은 구름</small><b>${s.fog.cloudLow??"–"}</b> %</div></div><span class="lbl">이슬점 차가 0에 가깝고 습도가 높으며 바람이 약할수록, 따뜻한 공기가 찬 바다 위로 올 때(기온−수온이 +) 바다 안개가 잘 낍니다.</span></div>`:""}
     ${models?`<div><span class="lbl">예보 모델별 결항 확률</span><br>${models}</div>`:""}
