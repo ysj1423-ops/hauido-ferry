@@ -1,0 +1,47 @@
+name: noon
+# 12시 KOMSA 다음 날 운항예보를 빨리 반영하기 위한 정오 전용 실행.
+# 12:00, 12:10, 12:20, 12:30(한국 시각)에 한 번씩만 확인하고, 내일 예보를 받으면 바로 끝낸다.
+# GitHub 예약 실행이 늦게 시작될 수 있어 시작 예약을 여러 개 걸어 두되, 같은 시간에는 하나만 돈다.
+on:
+  schedule:
+    - cron: "40 2 * * *"   # 11:40 KST
+    - cron: "50 2 * * *"   # 11:50 KST
+    - cron: "5 3 * * *"    # 12:05 KST
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: collect
+  cancel-in-progress: false
+jobs:
+  noon:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check at 12:00 12:10 12:20 12:30 KST
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: |
+          git config user.name "ferry-bot"
+          git config user.email "ferry-bot@users.noreply.github.com"
+          tomorrow=$(TZ=Asia/Seoul date -d tomorrow +%Y-%m-%d)
+          got() { node -e "const d=require('./docs/data/latest.json');process.exit(d.tomorrowIssued&&d.tomorrowIssued.date==='$tomorrow'?0:1)" 2>/dev/null; }
+          if got; then echo "이미 내일 예보 있음"; exit 0; fi
+          for slot in 1200 1210 1220 1230; do
+            now=$(TZ=Asia/Seoul date +%H%M)
+            [ $now -gt $((slot + 9)) ] && continue          # 이미 지난 시각은 건너뜀
+            target=$(TZ=Asia/Seoul date -d "today ${slot:0:2}:${slot:2:2}" +%s)
+            wait=$((target - $(date +%s))); [ $wait -gt 0 ] && sleep $wait
+            BACKFILL=0 node scripts/collect.mjs || true
+            git add docs/data
+            if ! git diff --cached --quiet; then
+              git commit -q -m "data: $(TZ=Asia/Seoul date +%m-%d\ %H:%M) KST (정오 확인)"
+              for i in 1 2 3; do git pull -q --rebase -X theirs origin main && git push -q && break; sleep 5; done
+            fi
+            if got; then echo "내일 예보 받음: $slot"; break; fi
+          done
