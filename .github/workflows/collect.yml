@@ -1,22 +1,22 @@
 name: collect
-# 한 번 실행에 한 번만 수집한다(같은 사이트를 짧은 간격으로 반복 호출하지 않음).
-# 30분마다 + KOMSA 발표 직후(12:10, 14:10, 17:10 한국 시각) 한 번씩.
+# 한 번 실행에 한 번만 수집한다.
+# GitHub 예약 실행이 몇 시간씩 늦거나 빠지는 일이 잦아서, 실행이 끝날 때 다음 확인 시각까지 기다렸다가
+# 다음 실행을 스스로 시작한다(이어달리기). 예약 실행은 이어달리기가 끊겼을 때 다시 잇는 예비용.
+# 확인 시각(한국): 매시 00·30분, 12:10·12:20(내일 예보 받기 전까지), 17:05
 on:
   schedule:
-    - cron: "*/30 * * * *"
-    - cron: "10 3 * * *"   # 12:10 KST
-    - cron: "10 5 * * *"   # 14:10 KST
-    - cron: "10 8 * * *"   # 17:10 KST
+    - cron: "15 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: collect
   cancel-in-progress: false
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,3 +34,23 @@ jobs:
           git add docs/data
           git diff --cached --quiet || git commit -q -m "data: $(TZ=Asia/Seoul date +%m-%d\ %H:%M) KST"
           for i in 1 2 3; do git pull -q --rebase -X theirs origin main && git push -q && break; sleep 5; done
+      - name: Wait and start next run
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tomorrow=$(TZ=Asia/Seoul date -d tomorrow +%Y-%m-%d)
+          have_tomorrow=$(node -e "const d=require('./docs/data/latest.json');console.log(d.tomorrowIssued&&d.tomorrowIssued.date==='$tomorrow'?1:0)" 2>/dev/null || echo 0)
+          now=$(date +%s); best=0
+          for add in 0 1; do
+            day=$(TZ=Asia/Seoul date -d "+$add day" +%Y-%m-%d)
+            slots=""; for h in $(seq 0 23); do slots="$slots $(printf %02d $h):00 $(printf %02d $h):30"; done
+            slots="$slots 17:05"
+            if [ "$have_tomorrow" = 0 ] || [ $add = 1 ]; then slots="$slots 12:10 12:20"; fi
+            for s in $slots; do t=$(TZ=Asia/Seoul date -d "$day $s" +%s); if [ $t -gt $((now + 60)) ] && { [ $best = 0 ] || [ $t -lt $best ]; }; then best=$t; fi; done
+          done
+          wait=$((best - now - 45)); [ $wait -lt 0 ] && wait=0
+          echo "다음 확인: $(TZ=Asia/Seoul date -d @$best '+%m-%d %H:%M') KST ($wait초 대기)"
+          sleep $wait
+          others=$(gh api "repos/${{ github.repository }}/actions/workflows/collect.yml/runs?per_page=10" --jq "[.workflow_runs[] | select((.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\") and .id != ${{ github.run_id }})] | length")
+          if [ "$others" = 0 ]; then gh workflow run collect.yml --ref main -R ${{ github.repository }} && echo "다음 실행 시작"; else echo "이미 대기 중인 실행이 있어 건너뜀"; fi
