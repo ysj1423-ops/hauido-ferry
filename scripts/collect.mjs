@@ -176,7 +176,7 @@ async function movementInfo(prevRt) {
 }
 // 현재 위치 문장 + 항구별 진행 상황(지난 곳은 실제 시각, 남은 곳은 예상 시각)
 function position(trip, stops, pat, via) {
-  const done = stops.some(s => s.end);
+  let done = stops.some(s => s.end);
   const order = pat?.stops?.length ? pat.stops : stops.map(s => ({ port: s.port }));
   // 평소 순서와 실제 기록을 앞에서부터 차례로 맞춤 (같은 항구 재방문 구분)
   let j = 0; const chain = [];
@@ -190,7 +190,10 @@ function position(trip, stops, pat, via) {
   let delay = 0;
   for (const c of chain) if (c.at && c.plan) { const pm = c.passed && c.plan.dep != null ? c.plan.dep : c.plan.arr; if (pm != null) delay = signedMin(toMin(c.at) - toMin(via)) - pm; }
   for (const c of chain) { if (!c.at && c.plan?.arr != null) c.eta = toHM(((toMin(via) + c.plan.arr + Math.max(0, delay)) % 1440 + 1440) % 1440); delete c.plan; }
-  const lastStop = stops.at(-1), lastEv = trip.events.filter(e => e.port || /완료/.test(e.st)).at(-1);
+  // 평소 경로의 마지막 항구에 도착 기록이 있으면 그 배편은 끝난 것으로 본다 (뒤에 붙은 다른 배편 기록 무시)
+  let used = stops;
+  if (pat?.stops?.length && chain.at(-1)?.at) { done = true; const endPort = chain.at(-1).port; const k = stops.findLastIndex(s => s.port === endPort); if (k >= 0) used = stops.slice(0, k + 1); }
+  const lastStop = used.at(-1), lastEv = trip.events.filter(e => e.port || /완료/.test(e.st)).at(-1);
   const nextIdx = chain.findIndex(c => !c.passed && !c.here);
   const next = nextIdx >= 0 ? chain[nextIdx] : null;
   let text, at = lastStop?.dep || lastStop?.arr || null;
