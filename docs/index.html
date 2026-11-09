@@ -160,18 +160,21 @@ const pct=p=>p==null?"–":Math.round(p*100)+"%";
 const isOut=s=>s.out??/목포/.test(s.port||"");
 
 function verdict(s){
-  if(s.official){const o=s.official.outcome;
-    if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(s.official.status||"통제"),lv:2};
-    if(o==="operated")return{cls:"off go",txt:"공식 "+(s.official.status||"운항"),lv:0};
+  const O=s.official;
+  if(O){const o=O.outcome,dep=/운항중|완료/.test(O.progress||"")||(s.live&&s.live.state!=="before"),F=O.forecast;
+    if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(O.status||"통제"),lv:2};
     if(o==="nonoperating")return{cls:"na",txt:"비운항",lv:-1};
-    if(o==="pending")return{cls:"warn",txt:"공식 "+(s.official.status||"검토"),lv:1};
-    return{cls:"na",txt:s.official.status||"확인 중",lv:-1}}
+    if(o==="pending")return{cls:"warn",txt:"공식 "+(O.status||"검토"),lv:1};
+    if(o==="operated"){
+      if(O.kind==="today"&&dep)return{cls:"off go",txt:/완료/.test(O.progress||"")?"운항 완료":"정상 출항",lv:0};
+      if(O.kind==="today"&&F)return{cls:F.outcome==="cancelled"?"stop":F.outcome==="nonoperating"?"na":"warn",txt:`${F.status} (전날 예보)`,lv:F.outcome==="cancelled"?2:F.outcome==="nonoperating"?-1:1};
+      return{cls:"off go",txt:O.kind==="tomorrow"?"운항 예보":"운항 예정",lv:0};}
+    return{cls:"na",txt:O.status||"확인 중",lv:-1}}
   if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
   if(s.p>=.5)return{cls:"stop",txt:"결항 위험",lv:2};
   if(s.p>=.2)return{cls:"warn",txt:"주의",lv:1};
   return{cls:"go",txt:"운항 예상",lv:0};
 }
-
 async function load(){
   try{
     const r=await fetch("data/latest.json?t="+Date.now(),{cache:"no-store"});
@@ -232,7 +235,7 @@ function renderList(){
   const far=day>=3;
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=s.live&&s.live.state!=="before"?s.live:null;
-    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:s.official?.forecast&&s.official.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"")?`당일 현황은 아직 '${esc(s.official.status)}'`:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>

@@ -421,6 +421,10 @@ function evaluate(rows, pfn) {
   const live = { today: null, tomorrow: null };
   live.today = await source("komsaToday", "KOMSA 당일 운항현황", komsaToday);
   live.tomorrow = await source("komsaTomorrow", "KOMSA 다음 날 운항예보", komsaTomorrow);
+  // 다음 날 운항예보를 날짜별로 보관 (자정이 지나 당일 현황이 '정상'(기본값)만 보여줄 때 전날 예보의 '검토·결항·비운항'을 잃지 않도록)
+  const memo = Object.fromEntries(Object.entries(prev?.forecastMemo || {}).filter(([d]) => d >= TODAY));
+  if (live.tomorrow?.date && live.tomorrow.rows.length) memo[live.tomorrow.date] = { updated: live.tomorrow.updated,
+    rows: Object.fromEntries(live.tomorrow.rows.map(r => [`${r.time}|${r.vessel}|${r.port}`, { status: r.status, reason: r.reason, outcome: r.outcome }])) };
   const rt = (await source("roundTrip", "배 위치·섬 출발 시각(실제 운항기록)", () => movementInfo(prev?.roundTrip))) || { offsets: RT.defaultOffsetMin, basis: "기본값", today: {} };
   await source("komsaConfirmed", "KOMSA 확정 운항실적", async () => {
     const missing = [];
@@ -527,7 +531,9 @@ function evaluate(rows, pfn) {
   function scheduleFor(date) {
     const L = live.today?.date === date ? live.today : live.tomorrow?.date === date ? live.tomorrow : null;
     if (L && L.rows.length) return { basis: L === live.today ? "KOMSA 당일 운항현황" : `KOMSA 다음 날 운항예보${live.tomorrow.updated ? " (" + live.tomorrow.updated + " 발표)" : ""}`,
-      list: L.rows.map(r => ({ ...r, official: { status: r.status, outcome: r.outcome, reason: r.reason || "", progress: r.progress || "", kind: L === live.today ? "today" : "tomorrow" } })) };
+      list: L.rows.map(r => { const f = L === live.today ? memo[date]?.rows?.[`${r.time}|${r.vessel}|${r.port}`] : null;
+        return { ...r, official: { status: r.status, outcome: r.outcome, reason: r.reason || "", progress: r.progress || "", kind: L === live.today ? "today" : "tomorrow",
+          forecast: f && f.outcome !== "operated" ? { status: f.status, reason: f.reason, outcome: f.outcome, updated: memo[date].updated } : null } }; }) };
     for (let w = 1; w <= 4; w++) {
       const d = addDays(date, -7 * w);
       const past = actRows.filter(r => r.date === d && r.outcome !== "nonoperating");
@@ -590,12 +596,13 @@ function evaluate(rows, pfn) {
 
   // 6) 공식 발표 변화 감지 + 알림
   const prevMap = new Map();
-  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official && !s.via) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, s.official.status);
+  const norm = st => (st || "").replace("운항", "정상").replace("비운항", "비운");
+  for (const d of prev?.days || []) for (const s of d.sailings) if (s.official && !s.via) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, norm(s.official.status));
   const changes = [];
   if (prev) for (const d of out) for (const s of d.sailings) {
     if (!s.official || s.via) continue;
     const before = prevMap.get(`${d.date}|${s.vessel}|${s.time}|${s.port}`);
-    if (before === s.official.status) continue;
+    if (before === norm(s.official.status)) continue;
     if (before === undefined && s.official.kind === "today") continue; // 날짜가 넘어가며 생긴 당일 목록은 제외
     changes.push({ at: new Date().toISOString(), date: d.date, time: s.time, vessel: s.vessel, port: s.port, from: before ?? null, to: s.official.status, reason: s.official.reason, outcome: s.official.outcome });
   }
@@ -619,7 +626,7 @@ function evaluate(rows, pfn) {
   const latest = {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
-    days: out, changeLog, sources,
+    days: out, changeLog, sources, forecastMemo: memo,
     model: {
       mode: enough ? "학습 모델" : "기본 규칙(학습 자료 부족)",
       trainRows: train.length, trainCancelled: positives, trainFrom: train[0]?.date || null, trainTo: train.at(-1)?.date || null,
