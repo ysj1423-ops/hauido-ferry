@@ -87,7 +87,8 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .who span{font-size:.8rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 .chip{display:grid;justify-items:end;gap:1px;text-align:right}
 .chip .s{font-weight:700;font-size:.88rem;padding:3px 10px;border-radius:999px;white-space:nowrap}
-.chip .p{font-family:var(--m);font-size:.72rem;color:var(--muted);max-width:118px;line-height:1.3}
+.chip .p{font-family:var(--f);font-size:.72rem;color:var(--muted);max-width:132px;line-height:1.3;word-break:keep-all}
+@media (min-width:560px){.chip .p{max-width:none;white-space:nowrap}}
 .who b{white-space:nowrap}
 .s.go{color:var(--go);background:var(--go-bg)}.s.warn{color:var(--warn);background:var(--warn-bg)}.s.stop{color:var(--stop);background:var(--stop-bg)}
 .s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--muted);background:var(--bg)}
@@ -237,7 +238,7 @@ function renderList(){
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
-    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 예보 '${esc(F.status)}' → 당일 현황 '${esc(s.official.status)}'`:`당일 현황은 아직 '${esc(s.official.status)}'`):s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
