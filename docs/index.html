@@ -316,6 +316,11 @@ $("seg").querySelectorAll("button").forEach(b=>b.onclick=()=>{dir=b.dataset.dir;
 document.querySelectorAll("nav.bottom button").forEach(b=>b.onclick=()=>{view=b.dataset.view;document.querySelectorAll("nav.bottom button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
   $("view-ships").hidden=view!=="ships";$("view-why").hidden=view!=="why";if(view==="why"&&D)renderWhy();window.scrollTo(0,0)});
 load();setInterval(load,5*60e3);
+// 화면 파일이 새로 배포되면 열려 있는 페이지도 자동으로 새 화면으로 바꾼다
+let pageSig=null;
+async function checkPage(){try{const t=await (await fetch("index.html?t="+Date.now(),{cache:"no-store"})).text();const sig=t.length+":"+t.slice(-200);
+  if(pageSig&&sig!==pageSig)location.reload();pageSig=sig;}catch(e){}}
+checkPage();setInterval(checkPage,5*60e3);
 })();
 </script>
 </body>
