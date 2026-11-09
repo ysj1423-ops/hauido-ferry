@@ -596,7 +596,7 @@ function evaluate(rows, pfn) {
 
   // 6) 공식 발표 변화 감지 + 알림
   const prevMap = new Map();
-  const norm = st => (st || "").replace("운항", "정상").replace("비운항", "비운");
+  const norm = st => ({ "운항": "정상", "비운항": "비운", "결항": "통제" })[(st || "").trim()] || (st || "").trim();
   for (const d of prev?.days || []) for (const s of d.sailings) if (s.official && !s.via) prevMap.set(`${d.date}|${s.vessel}|${s.time}|${s.port}`, norm(s.official.status));
   const changes = [];
   if (prev) for (const d of out) for (const s of d.sailings) {
