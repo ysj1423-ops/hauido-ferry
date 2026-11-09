@@ -193,7 +193,9 @@ function render(){
     return `<button class="tab" role="tab" aria-selected="${i===day}" data-i="${i}"><span>${i===0?"오늘":i===1?"내일":l.w}</span><b>${l.md}</b><span class="dot ${lv>=0?"d"+lv:""}"></span></button>`}).join("");
   $("tabs").querySelectorAll(".tab").forEach(b=>b.onclick=()=>{day=+b.dataset.i;open.clear();render()});
   // 최근 공식 발표 변화(24시간)
-  const recent=(D.changeLog||[]).filter(c=>Date.now()-Date.parse(c.at)<864e5);
+  // 오늘(한국 시각) 나온 발표 중 오늘 이후 배편에 대한 것만. 날짜가 바뀌면 사라진다.
+  const kstDay=t=>new Date(Date.parse(t)+9*3600e3).toISOString().slice(0,10);
+  const recent=(D.changeLog||[]).filter(c=>kstDay(c.at)===D.today&&c.date>=D.today);
   const byDate={};for(const c of recent)(byDate[c.date]||=[]).push(c);
   const lines=Object.entries(byDate).sort().map(([d,cs])=>{const seen=new Set();cs=cs.filter(c=>{const k=c.time+c.vessel+c.port;if(seen.has(k))return false;seen.add(k);return true});
     const bad=cs.filter(c=>c.outcome==="cancelled"||c.outcome==="pending"),ok=cs.filter(c=>c.outcome==="operated").length,off=cs.filter(c=>c.outcome==="nonoperating").length;
