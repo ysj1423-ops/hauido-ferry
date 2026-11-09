@@ -2,6 +2,7 @@
 // 실행: node scripts/collect.mjs  (선택: NTFY_TOPIC=주제 → 공식 발표 변화 알림)
 import fs from "node:fs";
 import path from "node:path";
+import { createOpenMeteo } from "./open-meteo.mjs";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const DATA = path.join(ROOT, "docs", "data");
@@ -12,6 +13,13 @@ fs.mkdirSync(DATA, { recursive: true });
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(path.join(DATA, f), "utf8")); } catch { return d; } };
 const writeJSON = (f, v) => fs.writeFileSync(path.join(DATA, f), JSON.stringify(v, null, f === "latest.json" ? 0 : 0));
+// Cache writes must survive a failed/partial API request without truncating the last good file.
+const writeAtomicJSON = (f, v) => {
+  const target = path.join(DATA, f), temp = target + ".tmp";
+  fs.writeFileSync(temp, JSON.stringify(v));
+  fs.renameSync(temp, target);
+};
+const om = createOpenMeteo({ point: CFG.point, readJSON, writeJSON: writeAtomicJSON });
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const sources = [];
 const log = (...a) => console.log(...a);
@@ -270,8 +278,8 @@ const kmaFor = (periods, date, hour) => {
 const P = CFG.point;
 async function omForecast() {
   const models = ["best_match", "ecmwf_ifs025", "kma_seamless", "gfs_seamless"];
-  const w = await get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=8`);
-  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&forecast_days=8&cell_selection=sea`);
+  const w = await om.get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=8`);
+  const m = await om.get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&forecast_days=8&cell_selection=sea`);
   const idx = new Map(m.hourly.time.map((t, i) => [t, m.hourly.wave_height[i]]));
   const sst = new Map(m.hourly.time.map((t, i) => [t, m.hourly.sea_surface_temperature?.[i]]));
   const B = k => w.hourly[`${k}_best_match`] ?? w.hourly[k];
@@ -286,16 +294,6 @@ async function omForecast() {
     w.hourly.time.forEach((t, i) => { out[mod][t] = { wind: ws[i], gust: gs?.[i], vis: (vs?.[i] ?? best_vs?.[i]), wave: idx.get(t),
       temp: fogVal("temperature_2m", i), dew: fogVal("dew_point_2m", i), rh: fogVal("relative_humidity_2m", i), cloudLow: fogVal("cloud_cover_low", i), sst: sst.get(t) }; });
   }
-  return out;
-}
-async function omHistory(start, end) {
-  const w = await get(`https://historical-forecast-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}`);
-  const m = await get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}&cell_selection=sea`);
-  const idx = new Map(m.hourly.time.map((t, i) => [t, m.hourly.wave_height[i]]));
-  const sst = new Map(m.hourly.time.map((t, i) => [t, m.hourly.sea_surface_temperature?.[i]]));
-  const out = {}, H = w.hourly;
-  H.time.forEach((t, i) => { out[t] = { wind: H.wind_speed_10m[i], gust: H.wind_gusts_10m[i], vis: H.visibility[i], wave: idx.get(t),
-    temp: H.temperature_2m[i], dew: H.dew_point_2m[i], rh: H.relative_humidity_2m[i], cloudLow: H.cloud_cover_low[i], sst: sst.get(t) }; });
   return out;
 }
 // 출항 1시간 전 ~ 2시간 후 구간의 가장 나쁜 값
@@ -459,7 +457,18 @@ function evaluate(rows, pfn) {
   const actRows = Object.values(act.rows);
   const histDates = actRows.map(r => r.date).filter(d => d < TODAY).sort();
   let omHist = null;
-  if (histDates.length) omHist = await source("omHist", "Open-Meteo 과거 예보 아카이브", () => omHistory(addDays(histDates[0], -1), addDays(TODAY, -1)));
+  if (histDates.length) {
+    let status;
+    omHist = await source("omHist", "Open-Meteo 과거 예보 아카이브", async () => {
+      const result = await om.history(addDays(histDates[0], -1), addDays(TODAY, -1));
+      status = result.status;
+      return result.hourly;
+    });
+    // Report an outage/incomplete cache while still using the available training history.
+    if (status) Object.assign(sources.at(-1), status, {
+      error: status.ok ? undefined : (status.errors.join("; ") || "과거 자료 일부 누락").slice(0, 200),
+    });
+  }
 
   // 4) 학습 자료 만들기: 바람·파도 결항과 안개(시계제한) 결항을 따로 학습
   for (const r of actRows) if (r.status) r.outcome = classify(r.status);
@@ -627,6 +636,7 @@ function evaluate(rows, pfn) {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
     days: out, changeLog, sources, forecastMemo: memo,
+    openMeteoRequests: om.stats,
     model: {
       mode: enough ? "학습 모델" : "기본 규칙(학습 자료 부족)",
       trainRows: train.length, trainCancelled: positives, trainFrom: train[0]?.date || null, trainTo: train.at(-1)?.date || null,
