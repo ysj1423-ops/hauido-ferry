@@ -54,6 +54,7 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 .stats span{display:inline-flex;align-items:center;gap:5px}
 .stats i{width:8px;height:8px;border-radius:50%;display:inline-block}
 .stats .wx{color:var(--muted)}
+.stats small{color:var(--muted);font-size:.78rem}
 .firsts{display:grid;gap:2px;font-size:.88rem}
 .first b{font-family:var(--m);font-weight:600}
 .first small{color:var(--muted)}
@@ -92,7 +93,7 @@ h1 small{font-size:.72rem;font-weight:500;color:var(--muted);margin-left:6px;let
 @media (min-width:560px){.chip .p{max-width:none;white-space:nowrap}}
 .who b{white-space:nowrap}
 .s.go{color:var(--go);background:var(--go-bg)}.s.warn{color:var(--warn);background:var(--warn-bg)}.s.stop{color:var(--stop);background:var(--stop-bg)}
-.s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--muted);background:var(--bg)}
+.s.off.go{background:var(--go);color:var(--card)}.s.off.stop{background:var(--stop);color:var(--card)}.s.na{color:var(--ink);background:var(--card);box-shadow:inset 0 0 0 1px var(--muted)}
 .more{border-top:1px solid var(--line);padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;font-size:.88rem}
 .more>div{min-width:0}
 .sail{min-width:0}
@@ -278,7 +279,8 @@ function summary(d){
   const basis=offi?(d.sailings.some(s=>s.official?.kind==="today")?"KOMSA 당일 현황":"KOMSA 다음 날 운항예보"):"예상 · 공식 발표 전";
   const dotc=["var(--go)","var(--warn)","var(--stop)"];
   const items=[[0,offi?"운항":"운항 예상"],[1,offi?"검토":"주의"],[2,offi?"통제":"결항 위험"]].filter(([lv])=>n(lv)).map(([lv,t])=>`<span><i style="background:${dotc[lv]}"></i>${t} ${n(lv)}편</span>`);
-  if(off)items.push(`<span><i style="background:var(--line)"></i>비운항 ${off}편</span>`);
+  const offList=base.filter(s=>s.official?.outcome==="nonoperating").map(s=>{const r=s.official.reason||s.official.forecast?.reason;return `${s.time} ${esc(s.vessel)}${r?" · "+esc(r):""}`}).join(", ");
+  if(off)items.push(`<span><i style="background:var(--muted)"></i>비운항 ${off}편 <small>(${offList})</small></span>`);
   const firstOf=f=>d.sailings.filter(f).sort((a,b)=>a.time.localeCompare(b.time))[0];
   const fb=[firstOf(s=>isOut(s)),firstOf(s=>!isOut(s))].filter(Boolean).map(s=>{
     const v=verdict(s);
@@ -299,7 +301,7 @@ function renderList(){
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
-    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황"):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
@@ -320,7 +322,7 @@ function renderSide(){
   const t=D.days[0],m=D.days[1];if(!t)return;
   const box=(d,i,title,tag)=>{const c=counts(d),offi=d.sailings.some(s=>s.official);const l=lab(d.date);
     return `<button data-i="${i}" class="${i===1&&offi?"hot":""}"><span class="ht"><b>${title} ${l.md} (${l.w})</b><span>${tag}</span></span>
-      <span class="nums"><span>${offi?"운항":"운항 예상"} <b>${c.ok}</b></span>${c.warn?`<span>${offi?"검토":"주의"} <b>${c.warn}</b></span>`:""}${c.bad?`<span>${offi?"통제":"결항 위험"} <b>${c.bad}</b></span>`:""}${c.off?`<span>비운항 <b>${c.off}</b></span>`:""}</span></button>`};
+      <span class="nums"><span>${offi?"운항":"운항 예상"} <b>${c.ok}</b></span>${c.warn?`<span>${offi?"검토":"주의"} <b>${c.warn}</b></span>`:""}${c.bad?`<span>${offi?"통제":"결항 위험"} <b>${c.bad}</b></span>`:""}${c.off?`<span>비운항 <b>${c.off}</b> <small class="lbl">${d.sailings.filter(s=>!s.via&&s.official?.outcome==="nonoperating").map(s=>`${s.time} ${esc(s.vessel)}`).join(", ")}</small></span>`:""}</span></button>`};
   const tmTag=m&&m.sailings.some(s=>s.official&&s.official.kind==="tomorrow")?`${D.tomorrowIssued?.updated||""} KOMSA 발표`:"12시 발표 전 · 예상";
   const d=D.days[day],k=d.sailings.find(s=>s.kma)?.kma,kw=d.sailings.map(s=>s.kma?.waveMax).filter(x=>x!=null),mw=d.sailings.map(s=>s.weather?.wind).filter(x=>x!=null),fg=d.sailings.map(s=>s.pFog).filter(x=>x!=null);
   const bad=(D.sources||[]).filter(s=>!s.ok);
