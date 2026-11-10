@@ -212,9 +212,11 @@ const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&g
 const pct=p=>p==null?"–":Math.round(p*100)+"%";
 const isOut=s=>s.out??/목포/.test(s.port||"");
 
+// 배 위치는 하루 한 번(12시) 받으므로, 받은 지 40분이 지나면 화면에 쓰지 않는다
+const liveFresh=()=>!!D?.roundTrip?.liveAt&&Date.now()-Date.parse(D.roundTrip.liveAt)<40*60e3;
 function verdict(s){
   const O=s.official;
-  if(O){const o=O.outcome,dep=/운항중|완료/.test(O.progress||"")||(s.live&&s.live.state!=="before"),F=O.forecast;
+  if(O){const o=O.outcome,dep=/운항중|완료/.test(O.progress||"")||(liveFresh()&&s.live&&s.live.state!=="before"),F=O.forecast;
     if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(O.status||"통제"),lv:2};
     if(o==="nonoperating")return{cls:"na",txt:"비운항",lv:-1};
     if(o==="pending")return{cls:"warn",txt:"공식 "+(O.status||"검토"),lv:1};
@@ -262,6 +264,7 @@ function render(){
 }
 const ARROW=`<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 function atSea(d){
+  if(!liveFresh())return "";
   const seen=new Set(),m=[];
   for(const s of d.sailings){const L=s.live;if(!L||L.state!=="moving")continue;const k=s.vessel+(s.via||s.time);if(seen.has(k))continue;seen.add(k);m.push(`<span><b>${esc(s.vessel)}</b> ${esc(L.text)} <small>${esc(L.at||"")}</small></span>`)}
   return m.length?`<div class="sea"><span class="lbl">지금 바다 위</span>${m.join("")}</div>`:"";
@@ -299,7 +302,7 @@ function renderList(){
   let ss=d.sailings.filter(s=>(dir==="all"||(dir==="out")===isOut(s))&&(fVessel==="all"||s.vessel===fVessel)&&(fStatus==="all"||(fStatus==="ok")===(verdict(s).lv===0)));
   const far=day>=3;
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
-    const lv=s.live&&s.live.state!=="before"?s.live:null;
+    const lv=liveFresh()&&s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
     const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
@@ -311,7 +314,7 @@ function renderList(){
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
   $("hero").innerHTML=summary(d);
   if(mode==="table"){$("list").className="list";$("list").innerHTML=ss.length?`<div class="panel tw"><table class="ttab"><tr><th>시각</th><th>배</th><th>구간</th><th>상태</th><th>비고</th></tr>${ss.map(s=>{const v=verdict(s),out=isOut(s);
-      const note=s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
+      const note=liveFresh()&&s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
       return `<tr><td class="tm">${s.approx?"약 ":""}${s.time}</td><td>${esc(s.vessel)}</td><td>${esc(s.port)} → ${esc(out?s.route.replace("목포-",""):"목포")}</td><td><span class="s ${v.cls}">${esc(v.txt)}</span></td><td>${esc(note)}</td></tr>`}).join("")}</table></div>`:`<p class="empty">조건에 맞는 배편이 없습니다</p>`;return}
   $("list").className="list cards";
   $("list").innerHTML=cards||`<p class="empty">조건에 맞는 배편이 없습니다</p>`;
@@ -338,7 +341,7 @@ function detail(s){
   const models=Object.entries(s.byModel||{}).filter(([,v])=>v!=null).map(([m,v])=>`${m} ${pct(v)}`).join(" · ");
   const sim=(s.similar||[]);
   const viaNote=s.via?`<div class="lbl">${esc(s.vessel)}는 목포에서 ${s.via}에 출발해 섬을 돌고 목포로 돌아오는 순환편입니다. ${s.approx?"섬 출발 시각은 최근 실제 운항기록 기준 예상 시각입니다.":"표시된 시각은 오늘 실제 출항 기록입니다."} 운항 여부는 ${s.via} 목포 출발편과 같습니다.</div>`:"";
-  const L=s.live;
+  const L=liveFresh()?s.live:null;
   const chain=L&&L.chain&&L.chain.length?`<div><span class="lbl">운항 진행 (${L.at?esc(L.at)+" 기록":"출항 전"}${L.delay>=5?` · 평소보다 ${L.delay}분 늦음`:""})</span>
     <ol class="chain">${L.chain.map(c=>`<li class="${c.passed?"done":c.here?"here":""}"><i></i><span>${esc(c.port)}</span><small>${c.at?esc(c.at):c.eta?"약 "+esc(c.eta):""}</small></li>`).join("")}</ol></div>`:"";
   return `<div class="more">${viaNote}${chain}
