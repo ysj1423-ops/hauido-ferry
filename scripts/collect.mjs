@@ -36,10 +36,10 @@ async function get(url, { tries = 4, json = true } = {}) {
   for (let i = 0; i < tries; i++) {
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
       const t = await r.text();
       return json ? JSON.parse(t) : t;
-    } catch (e) { last = e; await sleep(1500 * (i + 1)); }
+    } catch (e) { last = e; if (e.status === 429 || (e.status >= 400 && e.status < 500)) break; await sleep(1500 * (i + 1)); }
   }
   throw last;
 }
@@ -105,11 +105,20 @@ async function komsaTomorrow() {
 const RT = CFG.roundTrip;
 const toMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
 const toHM = m => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+// 공공데이터 API 하루 호출 예산: 한도(정확한 수치 확인 필요)를 넘지 않도록 하루 최대 API_DAILY_MAX회만 쓰고,
+// 429(한도 초과)를 받으면 그날(한국 시각 자정까지)은 더 부르지 않는다.
+const API_DAILY_MAX = 300;
+let apiState = { date: TODAY, calls: 0, blocked: false };
+function apiAllowed(n = 1) { return !apiState.blocked && apiState.calls + n <= API_DAILY_MAX; }
 // 하루치 운항 기록을 배편(출항시각)별 사건 목록으로: [{st, port, at}]
 async function apiEvents(date, vessel) {
+  if (!apiAllowed()) throw Object.assign(new Error(apiState.blocked ? "오늘 호출 한도 초과(429) — 자정 이후 재개" : "오늘 호출 예산 소진"), { quota: true });
+  apiState.calls++;
   const q = new URLSearchParams({ pageNo: "1", numOfRows: "1000", dataType: "JSON", rlvtYmd: compact(date), psnshpNm: vessel });
   const keyPart = KEY.includes("%") ? "serviceKey=" + KEY : "serviceKey=" + encodeURIComponent(KEY);
-  const j = await get(`https://apis.data.go.kr/B554035/ferry-route-info-v4/get-ferry-route-info-v4?${keyPart}&${q}`);
+  let j;
+  try { j = await get(`https://apis.data.go.kr/B554035/ferry-route-info-v4/get-ferry-route-info-v4?${keyPart}&${q}`, { tries: 2 }); }
+  catch (e) { if (e.status === 429) apiState.blocked = true; throw e; }
   const r = j.response || j; let it = r.body?.items?.item ?? r.body?.items ?? []; if (!Array.isArray(it)) it = it ? [it] : [];
   const trips = {};
   for (const x of it) {
@@ -135,52 +144,62 @@ function stopsOf(trip) {
 }
 const signedMin = d => ((d + 720) % 1440 + 1440) % 1440 - 720;
 const median = a => { if (!a.length) return null; a = [...a].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
-async function movementInfo(prevRt) {
+async function movementInfo(prevRt, todayRows) {
   const vessels = [...new Set([...CFG.vessels.map(v => v.name), ...RT.vessels])];
-  if (!KEY) return { offsets: prevRt?.offsets || RT.defaultOffsetMin, basis: prevRt?.basis || "기본값", patterns: prevRt?.patterns || {}, today: {}, live: {} };
-  let { offsets, basis, patterns } = prevRt || {};
-  if (!prevRt || prevRt.computedOn !== TODAY || !patterns) {
-    const samples = {}, pat = {};
-    for (let i = 1; i <= 7; i++) for (const v of vessels) {
-      const trips = await apiEvents(addDays(TODAY, -i), v);
+  const keep = { offsets: prevRt?.offsets || RT.defaultOffsetMin, basis: prevRt?.basis || "기본값", patterns: prevRt?.patterns || {}, computedOn: prevRt?.computedOn || null, today: {}, live: {} };
+  if (!KEY) return keep;
+  let { offsets, basis, patterns, computedOn } = keep;
+  // 평소 경로·시간(지난 7일)은 하루 한 번만. 실패해도 전날 값을 그대로 쓴다.
+  if (computedOn !== TODAY && apiAllowed(vessels.length * 7)) {
+    try {
+      const samples = {}, pat = {};
+      for (let i = 1; i <= 7; i++) for (const v of vessels) {
+        const trips = await apiEvents(addDays(TODAY, -i), v);
+        for (const [via, t] of Object.entries(trips)) {
+          const stops = stopsOf(t);
+          (pat[`${v}|${via}`] ||= { dir: t.dir, runs: [] }).runs.push(stops);
+          if (RT.vessels.includes(v)) for (const s of stops) if (s.dep && s.port !== "목포") { const d = toMin(s.dep) - toMin(via); if (d > 0 && d < 240) (samples[s.port] ||= []).push(d); }
+        }
+        await sleep(400);
+      }
+      offsets = { ...RT.defaultOffsetMin };
+      for (const [port, a] of Object.entries(samples)) if (a.length >= 3) offsets[port] = median(a);
+      basis = `최근 7일 실제 운항기록 중앙값 (${Object.entries(samples).map(([p, a]) => p + " " + a.length + "회").join(", ") || "기록 없음"})`;
+      patterns = {};
+      for (const [key, { dir, runs }] of Object.entries(pat)) {
+        const seqCount = {};
+        for (const r of runs) { const k = r.map(s => s.port).join(">"); seqCount[k] = (seqCount[k] || 0) + 1; }
+        const best = Object.entries(seqCount).sort((a, b) => b[1] - a[1])[0][0].split(">");
+        const via = key.split("|")[1];
+        patterns[key] = { dir, stops: best.map((port, idx) => {
+          const arr = [], dep = [];
+          for (const r of runs) { if (r.map(x => x.port).join(">") !== best.join(">")) continue; const s = r[idx];
+            if (s.arr) arr.push(signedMin(toMin(s.arr) - toMin(via))); if (s.dep) dep.push(signedMin(toMin(s.dep) - toMin(via))); }
+          return { port, arr: median(arr), dep: median(dep) };
+        }) };
+      }
+      computedOn = TODAY;
+    } catch (e) { if (!e.quota && e.status !== 429) throw e; }
+  }
+  // 오늘 위치: 지금 바다 위에 있을 법한 배만(출항 15분 전 ~ 출항 4시간 후) 부른다.
+  const today = {}, live = {};
+  const nowMin = nowKst().getUTCHours() * 60 + nowKst().getUTCMinutes();
+  const active = [...new Set((todayRows || []).filter(r => r.outcome !== "nonoperating" && nowMin >= toMin(r.time) - 15 && nowMin <= toMin(r.time) + 240).map(r => r.vessel))];
+  for (const v of active) {
+    if (!apiAllowed()) break;
+    try {
+      const trips = await apiEvents(TODAY, v);
       for (const [via, t] of Object.entries(trips)) {
         const stops = stopsOf(t);
-        const key = `${v}|${via}`;
-        (pat[key] ||= { dir: t.dir, runs: [] }).runs.push(stops);
-        if (RT.vessels.includes(v)) for (const s of stops) if (s.dep && s.port !== "목포") { const d = toMin(s.dep) - toMin(via); if (d > 0 && d < 240) (samples[s.port] ||= []).push(d); }
+        for (const s of stops) if (s.dep) today[`${v}|${via}|${s.port}`] = s.dep;
+        live[`${v}|${via}`] = position(t, stops, patterns[`${v}|${via}`], via);
       }
-      await sleep(150);
-    }
-    offsets = { ...RT.defaultOffsetMin };
-    for (const [port, a] of Object.entries(samples)) if (a.length >= 3) offsets[port] = median(a);
-    basis = `최근 7일 실제 운항기록 중앙값 (${Object.entries(samples).map(([p, a]) => p + " " + a.length + "회").join(", ") || "기록 없음"})`;
-    // 평소 들르는 항구 순서(가장 많이 나온 순서)와 출항시각 대비 도착까지 걸리는 시간(중앙값)
-    patterns = {};
-    for (const [key, { dir, runs }] of Object.entries(pat)) {
-      const seqCount = {};
-      for (const r of runs) { const k = r.map(s => s.port).join(">"); seqCount[k] = (seqCount[k] || 0) + 1; }
-      const best = Object.entries(seqCount).sort((a, b) => b[1] - a[1])[0][0].split(">");
-      const via = key.split("|")[1];
-      patterns[key] = { dir, stops: best.map((port, idx) => {
-        const arr = [], dep = [];
-        for (const r of runs) { if (r.map(x => x.port).join(">") !== best.join(">")) continue; const s = r[idx];
-          if (s.arr) arr.push(signedMin(toMin(s.arr) - toMin(via))); if (s.dep) dep.push(signedMin(toMin(s.dep) - toMin(via))); }
-        return { port, arr: median(arr), dep: median(dep) };
-      }) };
-    }
+    } catch (e) { if (!e.quota && e.status !== 429) throw e; break; }
+    await sleep(400);
   }
-  // 오늘: 섬 출항 실제 시각(순환편용) + 배편별 현재 위치
-  const today = {}, live = {};
-  for (const v of vessels) {
-    const trips = await apiEvents(TODAY, v);
-    for (const [via, t] of Object.entries(trips)) {
-      const stops = stopsOf(t);
-      for (const s of stops) if (s.dep) today[`${v}|${via}|${s.port}`] = s.dep;
-      live[`${v}|${via}`] = position(t, stops, patterns[`${v}|${via}`], via);
-    }
-    await sleep(150);
-  }
-  return { offsets, basis, patterns, computedOn: TODAY, today, live };
+  // 이전 실행에서 받은 오늘 기록은 유지(이번에 못 받은 배)
+  if (prevRt?.liveDate === TODAY) { for (const [k, v] of Object.entries(prevRt.live || {})) live[k] ??= v; for (const [k, v] of Object.entries(prevRt.todayDep || {})) today[k] ??= v; }
+  return { offsets, basis, patterns, computedOn, today, live, liveDate: TODAY };
 }
 // 현재 위치 문장 + 항구별 진행 상황(지난 곳은 실제 시각, 남은 곳은 예상 시각)
 function position(trip, stops, pat, via) {
@@ -423,7 +442,13 @@ function evaluate(rows, pfn) {
   const memo = Object.fromEntries(Object.entries(prev?.forecastMemo || {}).filter(([d]) => d >= TODAY));
   if (live.tomorrow?.date && live.tomorrow.rows.length) memo[live.tomorrow.date] = { updated: live.tomorrow.updated,
     rows: Object.fromEntries(live.tomorrow.rows.map(r => [`${r.time}|${r.vessel}|${r.port}`, { status: r.status, reason: r.reason, outcome: r.outcome }])) };
-  const rt = (await source("roundTrip", "배 위치·섬 출발 시각(실제 운항기록)", () => movementInfo(prev?.roundTrip))) || { offsets: RT.defaultOffsetMin, basis: "기본값", today: {} };
+  if (prev?.apiState?.date === TODAY) apiState = { ...prev.apiState };
+  let rt = await source("roundTrip", "배 위치·섬 출발 시각(실제 운항기록)", () => movementInfo(prev?.roundTrip, live.today?.date === TODAY ? live.today.rows : []));
+  if (!rt) rt = { offsets: prev?.roundTrip?.offsets || RT.defaultOffsetMin, basis: prev?.roundTrip?.basis || "기본값", patterns: prev?.roundTrip?.patterns || {}, computedOn: prev?.roundTrip?.computedOn || null, today: {}, live: {} };
+  if (KEY && (apiState.blocked || !apiAllowed())) {
+    const src = sources.find(x => x.key === "roundTrip"); src.ok = false;
+    src.error = apiState.blocked ? "오늘 호출 한도 초과(429) · 저장된 값 사용, 자정 이후 재개" : `오늘 호출 예산(${API_DAILY_MAX}회) 소진 · 저장된 값 사용`;
+  }
   await source("komsaConfirmed", "KOMSA 확정 운항실적", async () => {
     const missing = [];
     for (let i = 3; i <= CFG.historyDays; i++) { const d = addDays(TODAY, -i); if (!act.done[d]) missing.push(d); }
@@ -648,7 +673,8 @@ function evaluate(rows, pfn) {
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },
-    roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null, patterns: rt.patterns || {} },
+    roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null, patterns: rt.patterns || {}, live: rt.live || {}, todayDep: rt.today || {}, liveDate: rt.liveDate || null },
+    apiState,
     tomorrowIssued: live.tomorrow ? { date: live.tomorrow.date, updated: live.tomorrow.updated } : null,
   };
   writeJSON("latest.json", latest);

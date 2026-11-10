@@ -18,6 +18,7 @@
   --bg:#0d1720; --card:#15232e; --ink:#e5eef4; --muted:#93a6b4; --line:#273845; --sea:#72b4e2; --sea-bg:#14293a; --sea-2:#2f5d7d;
   --go:#5fd09a; --go-bg:#173628; --warn:#ebb853; --warn-bg:#3b2f13; --stop:#f38c83; --stop-bg:#3f1d1a; color-scheme:dark}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f);-webkit-text-size-adjust:100%}
 .wrap{max-width:720px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left,0px)) 40px max(16px,env(safe-area-inset-right,0px))}
@@ -123,6 +124,42 @@ a{color:var(--sea)}
 code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px}
 .btn{border:1px solid var(--sea);color:var(--sea);background:transparent;border-radius:8px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;justify-self:start}
 @media (max-width:420px){h1 small{display:none}.kv{grid-template-columns:repeat(2,1fr)}.sail>button{grid-template-columns:24px 52px 1fr auto;gap:8px}.dir{width:24px;height:24px}.t{font-size:1.1rem}}
+/* 도구 막대·사이드바·표 보기 */
+.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 8px}
+.tools .seg{margin:0;flex:1 1 260px}
+.tools select{font:inherit;font-size:.85rem;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.vt{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.vt button{border:0;background:var(--card);color:var(--muted);font:inherit;font-size:.82rem;padding:6px 10px;cursor:pointer}
+.vt button[aria-pressed="true"]{background:var(--ink);color:var(--card)}
+.jump{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin-top:12px;font-size:.85rem}
+.jump .btn{background:var(--sea);color:var(--card);border-color:var(--sea)}
+.jump label{display:inline-flex;gap:6px;align-items:center;color:var(--muted);font-size:.8rem}
+.side{display:grid;gap:12px;align-content:start;margin-top:16px}
+.side .panel h2{font-size:.95rem}
+.cmp{display:grid;gap:8px}
+.cmp button{all:unset;box-sizing:border-box;cursor:pointer;border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;gap:4px}
+.cmp button:focus-visible{outline:2px solid var(--sea)}
+.cmp button.hot{border-color:var(--go);box-shadow:inset 0 0 0 1px var(--go)}
+.cmp .ht{display:flex;justify-content:space-between;gap:8px;font-size:.82rem}
+.cmp .ht span{color:var(--muted)}
+.cmp .nums{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.92rem}
+.cmp .nums b{font-family:var(--m)}
+.legend{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:.75rem;text-align:center}
+.legend span{border-radius:8px;padding:6px 4px}
+.ttab td,.ttab th{text-align:left}
+.ttab td{font-family:var(--f)}
+.ttab td.tm{font-family:var(--m);font-weight:600}
+.ttab .s{font-weight:700;font-size:.8rem;padding:2px 8px;border-radius:999px;white-space:nowrap}
+#hero{margin-top:4px}
+/* PC 와이드: 7일 탭 7칸, 왼쪽 8 : 오른쪽 4, 배편 카드 2열 */
+@media (min-width:1024px){
+  .wrap{max-width:1240px;padding-left:32px;padding-right:32px}
+  .tabs{display:grid;grid-template-columns:repeat(7,1fr);overflow:visible}
+  .tab{min-width:0}
+  .layout{display:grid;grid-template-columns:minmax(0,8fr) minmax(0,4fr);gap:24px;align-items:start}
+  .side{position:sticky;top:150px;margin-top:12px}
+  #list.cards{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -138,13 +175,23 @@ code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px
 
 <main class="wrap">
   <div id="alert"></div>
-  <div id="view-ships">
-    <div class="seg" id="seg">
-      <button data-dir="all" aria-pressed="true">전체</button>
-      <button data-dir="out" aria-pressed="false">목포 출발</button>
-      <button data-dir="in" aria-pressed="false">섬 출발</button>
+  <div id="jump"></div>
+  <div id="view-ships" class="layout">
+    <div class="mainc">
+      <div class="tools">
+        <div class="seg" id="seg">
+          <button data-dir="all" aria-pressed="true">전체</button>
+          <button data-dir="out" aria-pressed="false">목포 출발</button>
+          <button data-dir="in" aria-pressed="false">섬 출발</button>
+        </div>
+        <select id="fVessel" aria-label="배 고르기"><option value="all">모든 배</option></select>
+        <select id="fStatus" aria-label="상태 고르기"><option value="all">모든 상태</option><option value="ok">운항·운항 예상만</option><option value="bad">주의·결항·비운항만</option></select>
+        <span class="vt" role="group" aria-label="보기 방식"><button data-mode="cards" aria-pressed="true">카드</button><button data-mode="table" aria-pressed="false">시간표</button></span>
+      </div>
+      <div id="hero"></div>
+      <div class="list cards" id="list"><p class="empty">배편 자료를 불러오는 중</p></div>
     </div>
-    <div class="list" id="list"><p class="empty">배편 자료를 불러오는 중</p></div>
+    <aside class="side" id="side" aria-label="요약"></aside>
   </div>
   <div id="view-why" hidden></div>
   <p class="upd" style="margin-top:16px">공식 발표가 없는 배편은 예상입니다. 출항 전 선사·운항관리센터 안내를 확인하세요.</p>
@@ -153,7 +200,11 @@ code{font-family:var(--m);background:var(--bg);padding:1px 5px;border-radius:4px
 <script>
 (()=>{
 const $=id=>document.getElementById(id);
-let D=null, day=0, dir="all", open=new Set(), view="ships";
+let D=null, day=0, dir="all", open=new Set(), view="ships", fVessel="all", fStatus="all", mode="cards", firstLoad=true;
+const store={get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+let autoTomorrow=store.get("hauido_auto_tomorrow")!=="0";
+const kstHour=()=>new Date(Date.now()+9*3600e3).getUTCHours();
+const hasTomorrowOfficial=()=>!!D&&!!D.days[1]&&D.days[1].sailings.some(s=>s.official&&s.official.kind==="tomorrow");
 const KO_DAY="일월화수목금토";
 const lab=d=>{const x=new Date(d+"T00:00:00");return {md:`${x.getMonth()+1}/${x.getDate()}`,w:KO_DAY[x.getDay()]}};
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -182,6 +233,7 @@ async function load(){
     const r=await fetch("data/latest.json?t="+Date.now(),{cache:"no-store"});
     if(!r.ok)throw new Error(r.status);
     const prev=D;D=await r.json();
+    if(firstLoad){firstLoad=false;if(autoTomorrow&&kstHour()>=12&&hasTomorrowOfficial())day=1;}
     notifyChanges(prev,D);render();
   }catch(e){$("upd").textContent="자료를 불러오지 못했습니다";}
 }
@@ -201,7 +253,11 @@ function render(){
     const bad=cs.filter(c=>c.outcome==="cancelled"||c.outcome==="pending"),ok=cs.filter(c=>c.outcome==="operated").length,off=cs.filter(c=>c.outcome==="nonoperating").length;
     return {bad:bad.length>0,html:`<span><b>${lab(d).md}</b> ${[ok?`운항 ${ok}편`:"",bad.length?`<b>${bad.map(c=>`${c.time} ${esc(c.vessel)} ${esc(c.to)}${c.reason?"("+esc(c.reason)+")":""}`).join(", ")}</b>`:"",off?`비운항 ${off}편`:""].filter(Boolean).join(" · ")}</span>`}});
   $("alert").innerHTML=lines.length?`<div class="alert ${lines.some(l=>l.bad)?"":"ok"}"><b>새 공식 발표</b>${lines.map(l=>l.html).join("")}</div>`:"";
-  renderList();if(view==="why")renderWhy();
+  const tm=D.days[1];
+  $("jump").innerHTML=hasTomorrowOfficial()?`<div class="jump">${day!==1?`<button class="btn" id="goTm">내일(${lab(tm.date).md}) 공식 운항예보 보기 →</button>`:""}<label><input type="checkbox" id="autoTm" ${autoTomorrow?"checked":""}> 12시 이후 접속하면 내일을 먼저 보기</label></div>`:"";
+  const gt=$("goTm");if(gt)gt.onclick=()=>{day=1;open.clear();render();window.scrollTo(0,0)};
+  const at=$("autoTm");if(at)at.onchange=()=>{autoTomorrow=at.checked;store.set("hauido_auto_tomorrow",autoTomorrow?"1":"0")};
+  renderList();renderSide();if(view==="why")renderWhy();
 }
 const ARROW=`<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h10M8.5 4.5 12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 function atSea(d){
@@ -210,8 +266,9 @@ function atSea(d){
   return m.length?`<div class="sea"><span class="lbl">지금 바다 위</span>${m.join("")}</div>`:"";
 }
 function summary(d){
-  const vs=d.sailings.map(verdict);
-  const n=k=>vs.filter(v=>v.lv===k).length, off=d.sailings.filter(s=>s.official?.outcome==="nonoperating").length;
+  // 순환편의 섬 출발은 같은 배편이므로 개수에서 뺀다(옆 요약과 같은 기준)
+  const base=d.sailings.filter(s=>!s.via),vs=base.map(verdict);
+  const n=k=>vs.filter(v=>v.lv===k).length, off=base.filter(s=>s.official?.outcome==="nonoperating").length;
   const offi=d.sailings.some(s=>s.official);
   const mx=k=>{const a=d.sailings.map(s=>s.weather?.[k]).filter(x=>x!=null);return a.length?Math.max(...a):null};
   const k=d.sailings.find(s=>s.kma)?.kma;
@@ -235,7 +292,9 @@ function summary(d){
 }
 function renderList(){
   const d=D.days[day];if(!d){$("list").innerHTML="";return}
-  let ss=d.sailings.filter(s=>dir==="all"||(dir==="out")===isOut(s));
+  const vs=[...new Set(D.days.flatMap(x=>x.sailings.map(s=>s.vessel)))];
+  $("fVessel").innerHTML=`<option value="all">모든 배</option>`+vs.map(v=>`<option ${v===fVessel?"selected":""}>${esc(v)}</option>`).join("");
+  let ss=d.sailings.filter(s=>(dir==="all"||(dir==="out")===isOut(s))&&(fVessel==="all"||s.vessel===fVessel)&&(fStatus==="all"||(fStatus==="ok")===(verdict(s).lv===0)));
   const far=day>=3;
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=s.live&&s.live.state!=="before"?s.live:null;
@@ -248,8 +307,29 @@ function renderList(){
       <span class="who"><b>${esc(s.vessel)}${s.via?`<span class="via">순환</span>`:""}</b><span>${esc(s.port)} → ${esc(dest)}${s.via?` · ${s.via}편`:""}</span></span>
       <span class="chip"><span class="s ${v.cls}">${esc(v.txt)}</span><span class="p">${sub}${far&&!s.official?" · 먼 예보":""}</span></span>
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
-  $("list").innerHTML=summary(d)+(cards||`<p class="empty">배편이 없습니다</p>`);
+  $("hero").innerHTML=summary(d);
+  if(mode==="table"){$("list").className="list";$("list").innerHTML=ss.length?`<div class="panel tw"><table class="ttab"><tr><th>시각</th><th>배</th><th>구간</th><th>상태</th><th>비고</th></tr>${ss.map(s=>{const v=verdict(s),out=isOut(s);
+      const note=s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
+      return `<tr><td class="tm">${s.approx?"약 ":""}${s.time}</td><td>${esc(s.vessel)}</td><td>${esc(s.port)} → ${esc(out?s.route.replace("목포-",""):"목포")}</td><td><span class="s ${v.cls}">${esc(v.txt)}</span></td><td>${esc(note)}</td></tr>`}).join("")}</table></div>`:`<p class="empty">조건에 맞는 배편이 없습니다</p>`;return}
+  $("list").className="list cards";
+  $("list").innerHTML=cards||`<p class="empty">조건에 맞는 배편이 없습니다</p>`;
   $("list").querySelectorAll(".sail>button").forEach(b=>b.onclick=()=>{const id=b.dataset.id;open.has(id)?open.delete(id):open.add(id);renderList()});
+}
+function counts(d){const c={ok:0,warn:0,bad:0,off:0};for(const s of d.sailings){if(s.via)continue;const v=verdict(s);if(v.lv===0)c.ok++;else if(v.lv===1)c.warn++;else if(v.lv===2)c.bad++;else c.off++}return c}
+function renderSide(){
+  const t=D.days[0],m=D.days[1];if(!t)return;
+  const box=(d,i,title,tag)=>{const c=counts(d),offi=d.sailings.some(s=>s.official);const l=lab(d.date);
+    return `<button data-i="${i}" class="${i===1&&offi?"hot":""}"><span class="ht"><b>${title} ${l.md} (${l.w})</b><span>${tag}</span></span>
+      <span class="nums"><span>${offi?"운항":"운항 예상"} <b>${c.ok}</b></span>${c.warn?`<span>${offi?"검토":"주의"} <b>${c.warn}</b></span>`:""}${c.bad?`<span>${offi?"통제":"결항 위험"} <b>${c.bad}</b></span>`:""}${c.off?`<span>비운항 <b>${c.off}</b></span>`:""}</span></button>`};
+  const tmTag=m&&m.sailings.some(s=>s.official&&s.official.kind==="tomorrow")?`${D.tomorrowIssued?.updated||""} KOMSA 발표`:"12시 발표 전 · 예상";
+  const d=D.days[day],k=d.sailings.find(s=>s.kma)?.kma,kw=d.sailings.map(s=>s.kma?.waveMax).filter(x=>x!=null),mw=d.sailings.map(s=>s.weather?.wind).filter(x=>x!=null),fg=d.sailings.map(s=>s.pFog).filter(x=>x!=null);
+  const bad=(D.sources||[]).filter(s=>!s.ok);
+  $("side").innerHTML=`<section class="panel"><h2>오늘 · 내일 한눈에</h2><div class="cmp">${box(t,0,"오늘","KOMSA 당일 현황")}${m?box(m,1,"내일",tmTag):""}</div></section>
+    <section class="panel"><h2>${lab(d.date).md} 바다 날씨</h2>
+      <div class="kv" style="grid-template-columns:repeat(2,1fr)"><div><small>기상청 파고 최대${k?` (${esc(k.kind)})`:""}</small><b>${kw.length?Math.max(...kw):"–"}</b> m</div><div><small>모델 최대 풍속</small><b>${mw.length?Math.max(...mw):"–"}</b> m/s</div><div><small>하늘</small><b style="font-family:var(--f)">${esc(k?.sky||"–")}</b></div><div><small>안개 확률 최대</small><b>${fg.length?pct(Math.max(...fg)):"–"}</b></div></div>
+      <div class="legend"><span class="s go">20% 미만<br>운항 예상</span><span class="s warn">20~50%<br>주의</span><span class="s stop">50% 이상<br>결항 위험</span></div></section>
+    <section class="panel"><h2>자료 상태</h2>${bad.length?bad.map(s=>`<div class="src"><span>${esc(s.name)}</span><span class="bad">${esc(s.error||"실패")}</span></div>`).join(""):`<div class="src"><span>모든 자료</span><span class="ok">정상</span></div>`}<span class="lbl">${esc($("upd").textContent)} · 30분마다, 12시 직후 추가 확인</span></section>`;
+  $("side").querySelectorAll(".cmp button").forEach(b=>b.onclick=()=>{day=+b.dataset.i;open.clear();render();window.scrollTo(0,0)});
 }
 function detail(s){
   const w=s.weather||{},k=s.kma;
@@ -316,8 +396,11 @@ function notifyChanges(prev,cur){
   if(fresh.length)try{new Notification("하의도 배편 공식 발표",{body:fresh.slice(0,5).map(c=>`${lab(c.date).md} ${c.time} ${c.vessel} ${c.to}`).join("\n")})}catch(e){}
 }
 $("seg").querySelectorAll("button").forEach(b=>b.onclick=()=>{dir=b.dataset.dir;$("seg").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));renderList()});
+$("fVessel").onchange=e=>{fVessel=e.target.value;renderList()};
+$("fStatus").onchange=e=>{fStatus=e.target.value;renderList()};
+document.querySelectorAll(".vt button").forEach(b=>b.onclick=()=>{mode=b.dataset.mode;document.querySelectorAll(".vt button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));renderList()});
 document.querySelectorAll("nav.bottom button").forEach(b=>b.onclick=()=>{view=b.dataset.view;document.querySelectorAll("nav.bottom button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
-  $("view-ships").hidden=view!=="ships";$("view-why").hidden=view!=="why";if(view==="why"&&D)renderWhy();window.scrollTo(0,0)});
+  $("view-ships").hidden=view!=="ships";$("jump").hidden=view!=="ships";$("view-why").hidden=view!=="why";if(view==="why"&&D)renderWhy();window.scrollTo(0,0)});
 load();setInterval(load,5*60e3);
 // 화면 파일이 새로 배포되면 열려 있는 페이지도 자동으로 새 화면으로 바꾼다
 let pageSig=null;
