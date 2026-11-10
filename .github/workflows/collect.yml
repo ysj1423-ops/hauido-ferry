@@ -2,7 +2,8 @@ name: collect
 # 한 번 실행에 한 번만 수집한다.
 # GitHub 예약 실행이 몇 시간씩 늦거나 빠지는 일이 잦아서, 실행이 끝날 때 다음 확인 시각까지 기다렸다가
 # 다음 실행을 스스로 시작한다(이어달리기). 예약 실행은 이어달리기가 끊겼을 때 다시 잇는 예비용.
-# 확인 시각(한국): 매시 00·30분, 12:05~12:25 5분 간격(내일 예보 받기 전까지), 17:05
+# 확인 시각(한국): 05~21시 15분 간격, 그 외 30분 간격, 12:05~12:25 5분 간격(내일 예보 받기 전까지), 17:05
+# 공공데이터 API(배 위치·섬 출발 시각)는 12시대 실행에서 하루 한 번만 부른다.
 on:
   schedule:
     - cron: "15 * * * *"
@@ -52,7 +53,7 @@ jobs:
           now=$(date +%s); best=0
           for add in 0 1; do
             day=$(TZ=Asia/Seoul date -d "+$add day" +%Y-%m-%d)
-            slots=""; for h in $(seq 0 23); do slots="$slots $(printf %02d $h):00 $(printf %02d $h):30"; done
+            slots=""; for h in $(seq 0 23); do slots="$slots $(printf %02d $h):00 $(printf %02d $h):30"; if [ $h -ge 5 ] && [ $h -le 20 ]; then slots="$slots $(printf %02d $h):15 $(printf %02d $h):45"; fi; done
             slots="$slots 17:05"
             if [ "$have_tomorrow" = 0 ] || [ $add = 1 ]; then slots="$slots 12:05 12:10 12:15 12:20 12:25"; fi
             for s in $slots; do t=$(TZ=Asia/Seoul date -d "$day $s" +%s); if [ $t -gt $((now + 60)) ] && { [ $best = 0 ] || [ $t -lt $best ]; }; then best=$t; fi; done

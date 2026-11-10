@@ -150,7 +150,10 @@ async function movementInfo(prevRt, todayRows) {
   if (!KEY) return keep;
   let { offsets, basis, patterns, computedOn } = keep;
   // 평소 경로·시간(지난 7일)은 하루 한 번만. 실패해도 전날 값을 그대로 쓴다.
-  if (computedOn !== TODAY && apiAllowed(vessels.length * 7)) {
+  // 공공데이터 API는 하루 한 번, 12시대 실행에서만 부른다(평소 경로·섬 출발 시각 + 그 시각 위치 한 번).
+  const noonRun = nowKst().getUTCHours() === 12 && computedOn !== TODAY;
+  if (!noonRun) return { ...keep, live: prevRt?.liveDate === TODAY ? (prevRt.live || {}) : {}, today: prevRt?.liveDate === TODAY ? (prevRt.todayDep || {}) : {}, liveDate: prevRt?.liveDate || null, liveAt: prevRt?.liveAt || null };
+  if (apiAllowed(vessels.length * 7)) {
     try {
       const samples = {}, pat = {};
       for (let i = 1; i <= 7; i++) for (const v of vessels) {
@@ -199,7 +202,7 @@ async function movementInfo(prevRt, todayRows) {
   }
   // 이전 실행에서 받은 오늘 기록은 유지(이번에 못 받은 배)
   if (prevRt?.liveDate === TODAY) { for (const [k, v] of Object.entries(prevRt.live || {})) live[k] ??= v; for (const [k, v] of Object.entries(prevRt.todayDep || {})) today[k] ??= v; }
-  return { offsets, basis, patterns, computedOn, today, live, liveDate: TODAY };
+  return { offsets, basis, patterns, computedOn: TODAY, today, live, liveDate: TODAY, liveAt: new Date().toISOString() };
 }
 // 현재 위치 문장 + 항구별 진행 상황(지난 곳은 실제 시각, 남은 곳은 예상 시각)
 function position(trip, stops, pat, via) {
@@ -453,7 +456,8 @@ function evaluate(rows, pfn) {
     const missing = [];
     for (let i = 3; i <= CFG.historyDays; i++) { const d = addDays(TODAY, -i); if (!act.done[d]) missing.push(d); }
     const backfill = process.env.BACKFILL === "0" ? 0 : CFG.backfillPerRun;
-    for (const d of [addDays(TODAY, -1), addDays(TODAY, -2), ...missing.slice(0, backfill)]) {
+    const hourly = nowKst().getUTCMinutes() < 15; // 지난 이틀 확정 실적은 한 시간에 한 번만 다시 확인
+    for (const d of [...(hourly ? [addDays(TODAY, -1), addDays(TODAY, -2)] : []), ...missing.slice(0, backfill)]) {
       const rows = await komsaConfirmed(d);
       for (const k of Object.keys(act.rows)) if (k.startsWith(d + "|")) delete act.rows[k];
       for (const r of rows) act.rows[`${r.date}|${r.time}|${r.vessel}|${r.port}`] = r;
@@ -625,7 +629,11 @@ function evaluate(rows, pfn) {
         similar,
       };
     });
-    out.push({ date, scheduleBasis: sch.basis, sailings });
+    // 대기 배(엔젤): 주력 배(퍼스트엔젤)가 그날 비운항·통제일 때나, 공식으로 실제 운항할 때만 보여준다
+    const offMain = new Set(Object.values(CFG.standby || {}).filter(m => sailings.some(x => x.vessel === m && x.official && ["nonoperating", "cancelled"].includes(x.official.outcome))));
+    const shown = sailings.filter(x => { const main = CFG.standby?.[x.vessel]; if (!main) return true;
+      return offMain.has(main) || (x.official && !["nonoperating"].includes(x.official.outcome)); });
+    out.push({ date, scheduleBasis: sch.basis, sailings: shown });
   }
 
   // 6) 공식 발표 변화 감지 + 알림
@@ -679,7 +687,7 @@ function evaluate(rows, pfn) {
     },
     vesselStats,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },
-    roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null, patterns: rt.patterns || {}, live: rt.live || {}, todayDep: rt.today || {}, liveDate: rt.liveDate || null },
+    roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null, patterns: rt.patterns || {}, live: rt.live || {}, todayDep: rt.today || {}, liveDate: rt.liveDate || null, liveAt: rt.liveAt || null },
     apiState,
     tomorrowIssued: live.tomorrow ? { date: live.tomorrow.date, updated: live.tomorrow.updated } : null,
   };
