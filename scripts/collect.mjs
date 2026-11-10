@@ -657,7 +657,9 @@ function evaluate(rows, pfn) {
       return `${d.slice(5).replace("-", "/")}: ` + (bad.length ? bad.map(c => `${c.time} ${c.vessel}(${c.port}) ${c.to}${c.reason ? "-" + c.reason : ""}`).join(", ") : `${cs.length}편 ${cs[0].to}`);
     });
     await source("ntfy", "휴대폰 알림", async () => {
-      const r = await fetch(`https://ntfy.sh/${encodeURIComponent(NTFY)}`, { method: "POST", body: lines.join("\n"), headers: { Title: "Hauido ferry", Tags: "ship" } });
+      // JSON으로 보내야 제목에 한글을 쓸 수 있다
+      const r = await fetch("https://ntfy.sh/", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: NTFY, title: "하의도 배편 공식 발표", message: lines.join("\n"), tags: ["ship"], click: "https://ysj1423-ops.github.io/hauido-ferry/" }) });
       if (!r.ok) throw new Error("HTTP " + r.status);
     });
   }

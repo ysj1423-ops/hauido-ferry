@@ -1,0 +1,13 @@
+name: ntfy-test
+# 휴대폰 알림 시험 발송(필요할 때 수동 실행)
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: node scripts/ntfy-test.mjs
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
