@@ -654,7 +654,13 @@ function evaluate(rows, pfn) {
     });
   }
 
-  // 7) 저장
+  // 7) 저장 — 주요 자료(KOMSA 당일·다음 날, 기상청, 모델 예보)가 한꺼번에 실패하면 일시적인 접속 장애로 보고 이전 자료를 그대로 둔다
+  const core = ["komsaToday", "komsaTomorrow", "kma", "om"];
+  if (prev && core.every(k => sources.find(x => x.key === k && !x.ok))) {
+    log("주요 자료가 모두 실패 → 이전 자료 유지", sources.filter(x => !x.ok).map(x => x.key + ":" + x.error).join(", "));
+    return;
+  }
+
   writeJSON("actuals.json", act);
   writeJSON("kma-archive.json", kmaArc);
   const latest = {
