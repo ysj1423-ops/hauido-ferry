@@ -227,8 +227,11 @@ function verdict(s){
       return{cls:"off go",txt:O.kind==="tomorrow"?"운항 예보":"운항 예정",lv:0};}
     return{cls:"na",txt:O.status||"확인 중",lv:-1}}
   if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
+  const fl=s.flags||[];
   if(s.p>=.5)return{cls:"stop",txt:"결항 위험",lv:2};
+  if(fl.includes("disagree"))return{cls:"warn",txt:"예보 엇갈림",lv:1};
   if(s.p>=.2)return{cls:"warn",txt:"주의",lv:1};
+  if(fl.includes("midRough"))return{cls:"warn",txt:"주의 · 높은 파도",lv:1};
   return{cls:"go",txt:"운항 예상",lv:0};
 }
 async function load(){
@@ -304,7 +307,7 @@ function renderList(){
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=liveFresh()&&s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
-    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(s.pRange&&s.pRange[1]-s.pRange[0]>=.1?`결항 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:`결항 ${pct(s.p)}`)+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(`결항 ${pct(s.p)}`+((s.flags||[]).includes("disagree")?` · 모델 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:(s.flags||[]).includes("midRough")?` · 파고 ${esc(s.kma?.wave)}m`:""))+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
@@ -349,7 +352,8 @@ function detail(s){
     ${k?`<div><span class="lbl">기상청 ${esc(k.kind)} 해상예보 (${esc(k.area)}, ${esc(k.part)})</span><br>${k.wind?`풍속 ${esc(k.wind)} m/s · `:""}파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 해상예보 범위 밖</div>`}
     ${s.pWind!=null||s.pFog!=null?`<div><span class="lbl">결항 원인별 확률</span><br>바람·파도 ${pct(s.pWind)} · 안개 ${pct(s.pFog)}</div>`:""}
     ${s.fog?`<div><span class="lbl">안개 요인 (출항 3시간 전~2시간 후)</span><div class="kv fogkv"><div><small>이슬점 차</small><b>${s.fog.dewDep??"–"}</b> ℃</div><div><small>습도</small><b>${s.fog.rh??"–"}</b> %</div><div><small>기온−수온</small><b>${s.fog.airSea??"–"}</b> ℃</div><div><small>낮은 구름</small><b>${s.fog.cloudLow??"–"}</b> %</div></div><span class="lbl">이슬점 차가 0에 가깝고 습도가 높으며 바람이 약할수록, 따뜻한 공기가 찬 바다 위로 올 때(기온−수온이 +) 바다 안개가 잘 낍니다.</span></div>`:""}
-    ${models?`<div><span class="lbl">예보 모델별 결항 확률</span><br>${models}</div>`:""}
+    ${models?`<div><span class="lbl">예보 모델별 결항 확률 (화면의 확률은 이 값들의 평균)</span><br>${models}${(s.flags||[]).includes("disagree")?`<br><span class="lbl">모델끼리 결과가 크게 달라 아직 판단하기 어렵습니다. 날짜가 가까워지면 다시 확인하세요.</span>`:""}</div>`:""}
+    ${(s.flags||[]).includes("midRough")?`<div class="lbl">기상청 중기 해상예보 파고가 ${esc(s.kma?.wave)} m로 풍랑주의보 기준(3 m) 이상이라 '주의'로 표시합니다. 중기 예보는 아직 학습 자료가 없어 확률에는 넣지 않았습니다.</div>`:""}
     ${sim.length?`<div><span class="lbl">이 배의 비슷한 날씨 과거 사례 (빨강 = 결항)</span><div class="past">${sim.map(x=>`<span class="y${x.y}" title="풍속 ${x.wind} · 파고 ${x.wave}">${x.date.slice(2)} ${x.time}</span>`).join("")}</div></div>`:""}
   </div>`;
 }
@@ -362,7 +366,7 @@ function renderWhy(){
   <section class="panel"><h2>예측 방법</h2>
     <p>각 배편 출항 시각 앞뒤의 풍속·돌풍·파고·시정 예보와 기상청 해상예보를, 같은 배의 과거 실제 운항·통제 기록과 짝지어 학습한 확률입니다. 4개 기상 모델 결과가 다르면 확률 범위로 보여줍니다. KOMSA가 당일 현황이나 다음 날 운항예보(매일 12시경)를 발표하면 예상 대신 공식 결과를 표시합니다.</p>
     <p class="lbl">현재: ${esc(m.mode)} · 학습 배편 ${m.trainRows}편(결항 ${m.trainCancelled}편) · ${m.trainFrom??"–"} ~ ${m.trainTo??"–"}</p>
-    <p class="lbl">기준: 결항 확률 20% 미만 운항 예상 · 20~50% 주의 · 50% 이상 결항 위험</p>
+    <p class="lbl">기준: 결항 확률(기상 모델 3~4개 평균) 20% 미만 운항 예상 · 20~50% 주의 · 50% 이상 결항 위험. 모델끼리 40%p 이상 차이 나면 '예보 엇갈림', 기상청 중기 파고가 3 m 이상이면 최소 '주의'.</p>
   </section>
   <section class="panel"><h2>맞았는지 검증</h2>
   ${v?`<p class="lbl">${v.trainFrom}~${v.trainTo} 자료로만 학습하고, 이후 ${v.testFrom}~${v.testTo} 실제 결과와 비교했습니다(미래 자료 사용 안 함).</p>

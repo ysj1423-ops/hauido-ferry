@@ -603,8 +603,10 @@ function evaluate(rows, pfn) {
       }
       const main = feats.best_match || Object.values(feats)[0] || null;
       const pv = Object.values(probs).filter(p => p != null);
-      const pWind = windProbs.best_match ?? null;
-      const p = probs.best_match ?? (pv.length ? pv.reduce((a, b) => a + b, 0) / pv.length : (k ? ruleProb({ kmaWind: k.windMax, kmaWave: k.waveMax }) : null));
+      const wv = Object.values(windProbs).filter(x => x != null);
+      const pWind = wv.length ? wv.reduce((a, b) => a + b, 0) / wv.length : null; // 바람·파도 확률도 모델 평균
+      // 최종 확률 = 여러 기상 모델 확률의 평균(한 모델만 믿지 않음)
+      const p = pv.length ? pv.reduce((a, b) => a + b, 0) / pv.length : (k ? ruleProb({ kmaWind: k.windMax, kmaWave: k.waveMax }) : null);
       // 비슷한 과거 배편
       let similar = [];
       if (main && train.length) {
@@ -619,6 +621,10 @@ function evaluate(rows, pfn) {
         time: s.time, vessel: s.vessel, vesselId: s.vesselId, port: s.port, out: s.port === "목포", route: s.route, approx: !!s.approx, via: s.via || null,
         official: s.official,
         live: date === TODAY ? (rt.live?.[`${s.vessel}|${s.via || s.time}`] || null) : null,
+        flags: [
+          ...(pv.length > 1 && Math.max(...pv) - Math.min(...pv) >= 0.4 ? ["disagree"] : []),
+          ...((() => { const m = !k && kmaMidNow ? kmaFor(kmaMidNow, date, hour) : null; return m && m.waveMax >= 3 ? ["midRough"] : []; })()),
+        ],
         p: p == null ? null : rd(p, 3), pWind: rd(pWind, 3), pFog: rd(fogP, 3),
         fog: fogF ? { visKm: fogF.vis == null ? null : rd(fogF.vis / 1000), dewDep: rd(fogF.dewDep), rh: rd(fogF.rh, 0), airSea: rd(fogF.airSea), cloudLow: rd(fogF.cloudLow, 0), wind: rd(fogF.windMean) } : null,
         pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
