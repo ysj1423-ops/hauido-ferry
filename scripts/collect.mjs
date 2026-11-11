@@ -403,7 +403,9 @@ async function modelSkill(rows, omModel) {
       "정확도 가중": inv(1), "정확도 강한 가중": inv(4),
     };
     const score = Object.fromEntries(Object.entries(cand).map(([name, w]) => [name, pairs.reduce((s, x) => s + (SKILL_MODELS.reduce((a, m) => a + w[m] * x.ps[m], 0) - x.y) ** 2, 0) / pairs.length]));
-    const chosen = Object.entries(score).sort((a, b) => a[1] - b[1])[0][0];
+    let chosen = Object.entries(score).sort((a, b) => a[1] - b[1])[0][0];
+    // 한 모델만 쓰면 그 모델의 극단값에 흔들리므로, 단일 모델이 3% 이상 확실히 나을 때만 단일 모델을 쓴다
+    if (chosen.endsWith("만") && score["정확도 강한 가중"] <= score[chosen] * 1.03) chosen = "정확도 강한 가중";
     leads[lead] = { n: pairs.length, cancellations: pairs.filter(x => x.y).length,
       brier: Object.fromEntries(Object.entries(brier).map(([m, v]) => [m, rd(v, 4)])),
       methods: Object.fromEntries(Object.entries(score).map(([k, v]) => [k, rd(v, 4)])), chosen, weights: Object.fromEntries(Object.entries(cand[chosen]).map(([m, v]) => [m, rd(v, 3)])) };
