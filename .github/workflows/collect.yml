@@ -62,4 +62,14 @@ jobs:
           echo "다음 확인: $(TZ=Asia/Seoul date -d @$best '+%m-%d %H:%M') KST ($wait초 대기)"
           sleep $wait
           others=$(gh api "repos/${{ github.repository }}/actions/workflows/collect.yml/runs?per_page=10" --jq "[.workflow_runs[] | select((.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\") and .id != ${{ github.run_id }})] | length")
-          if [ "$others" = 0 ]; then gh workflow run collect.yml --ref main -R ${{ github.repository }} && echo "다음 실행 시작"; else echo "이미 대기 중인 실행이 있어 건너뜀"; fi
+          if [ "$others" != 0 ]; then echo "이미 대기 중인 실행이 있어 건너뜀"; exit 0; fi
+          # 다음 실행을 시작하고, GitHub 쪽 시작 실패(startup_failure)면 최대 3번 다시 시도한다
+          for try in 1 2 3; do
+            gh workflow run collect.yml --ref main -R ${{ github.repository }} || true
+            sleep 40
+            st=$(gh api "repos/${{ github.repository }}/actions/workflows/collect.yml/runs?per_page=5" --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})][0] | (.status + \" \" + (.conclusion // \"\"))")
+            echo "다음 실행 상태($try): $st"
+            case "$st" in queued*|in_progress*|waiting*|pending*|"completed success") echo "다음 실행 시작됨"; exit 0;; esac
+            sleep 20
+          done
+          echo "다음 실행을 시작하지 못함(예약 실행이 이어받음)"
