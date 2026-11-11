@@ -31,11 +31,11 @@ const addDays = (s, n) => ymd(new Date(Date.parse(s + "T00:00:00Z") + n * 86400e
 const TODAY = ymd(nowKst());
 const compact = s => s.replaceAll("-", "");
 
-async function get(url, { tries = 4, json = true } = {}) {
+async function get(url, { tries = 4, json = true, timeout = 30000 } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
     try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      const r = await fetch(url, { signal: AbortSignal.timeout(timeout) });
       if (!r.ok) { const e = new Error("HTTP " + r.status); e.status = r.status; throw e; }
       const t = await r.text();
       return json ? JSON.parse(t) : t;
@@ -355,10 +355,15 @@ const MODEL_KO = { best_match: "종합", ecmwf_ifs025: "유럽", gfs_seamless: "
 async function omPrevRuns(model, start, end) {
   const days = [1, 2, 3, 4, 5, 6, 7];
   const vars = days.flatMap(d => [`wind_speed_10m_previous_day${d}`, `wind_gusts_10m_previous_day${d}`]).join(",");
-  const j = await get(`https://previous-runs-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=${vars}&models=${model}&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${start}&end_date=${end}`);
-  const H = j.hourly, key = (v, d) => H[`${v}_previous_day${d}`] ?? H[`${v}_previous_day${d}_${model}`];
   const out = {};
-  H.time.forEach((t, i) => { out[t] = { w: days.map(d => key("wind_speed_10m", d)?.[i] ?? null), g: days.map(d => key("wind_gusts_10m", d)?.[i] ?? null) }; });
+  // 한 번에 2년을 받으면 시간이 초과되어 3개월씩 나눠 받는다
+  for (let a = start; a <= end; a = addDays(a, 90)) {
+    const b = addDays(a, 89) < end ? addDays(a, 89) : end;
+    const j = await get(`https://previous-runs-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=${vars}&models=${model}&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${a}&end_date=${b}`, { timeout: 90000, tries: 3 });
+    const H = j.hourly, key = (v, d) => H[`${v}_previous_day${d}`] ?? H[`${v}_previous_day${d}_${model}`];
+    H.time.forEach((t, i) => { out[t] = { w: days.map(d => key("wind_speed_10m", d)?.[i] ?? null), g: days.map(d => key("wind_gusts_10m", d)?.[i] ?? null) }; });
+    await sleep(300);
+  }
   return out;
 }
 function prevFeat(prev, date, time, lead) {
