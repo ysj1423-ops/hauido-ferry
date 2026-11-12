@@ -43,6 +43,14 @@ jobs:
             sleep 5
           done
           [ "$pushed" = 1 ] || { echo "Data/cache push failed" >&2; exit 1; }
+      - name: Start model scoring if stale
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          stale=$(node -e "const fs=require('fs');let d=null;try{d=JSON.parse(fs.readFileSync('docs/data/model-skill.json'))}catch(e){};const t=new Date(Date.now()+9*3600e3);t.setUTCDate(t.getUTCDate()-7);console.log(!d||!d.fogLeads||d.computedOn<=t.toISOString().slice(0,10)?1:0)")
+          busy=$(gh api "repos/${{ github.repository }}/actions/workflows/skill.yml/runs?per_page=3" --jq '[.workflow_runs[]|select(.status!="completed")]|length' 2>/dev/null || echo 1)
+          if [ "$stale" = 1 ] && [ "$busy" = 0 ]; then gh workflow run skill.yml --ref main -R ${{ github.repository }} && echo "모델 성적 계산 시작"; fi
       - name: Wait and start next run
         if: always()
         env:
