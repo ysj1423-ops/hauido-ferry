@@ -361,12 +361,17 @@ async function omPrevRuns(model, start, end) {
   // 한 번에 2년을 받으면 시간이 초과되어 3개월씩 나눠 받는다
   for (let a = start; a <= end; a = addDays(a, 60)) {
     const b = addDays(a, 59) < end ? addDays(a, 59) : end;
-    const j = await get(`https://previous-runs-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=${vars}&models=${model}&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${a}&end_date=${b}`, { timeout: 90000, tries: 3 });
+    const url = `https://previous-runs-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=${vars}&models=${model}&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${a}&end_date=${b}`;
+    let j = null;
+    for (let t = 0; t < 4 && !j; t++) {
+      try { j = await get(url, { timeout: 120000, tries: 1 }); }
+      catch (e) { if (e.status && e.status < 500 && e.status !== 429) throw e; if (t === 3) throw e; await sleep(60000 * (t + 1)); } // 바쁘면 1~3분 쉬고 다시
+    }
     const H = j.hourly, key = (v, d) => H[`${v}_previous_day${d}`] ?? H[`${v}_previous_day${d}_${model}`];
     const col = v => days.map(d => key(v, d));
     const cw = col("wind_speed_10m"), cg = col("wind_gusts_10m"), cv = col("visibility"), ch = col("relative_humidity_2m"), ct = col("temperature_2m");
     H.time.forEach((t, i) => { out[t] = { w: cw.map(a => a?.[i] ?? null), g: cg.map(a => a?.[i] ?? null), v: cv.map(a => a?.[i] ?? null), h: ch.map(a => a?.[i] ?? null), t: ct.map(a => a?.[i] ?? null) }; });
-    await sleep(300);
+    await sleep(5000); // 요청 사이 5초 쉼
   }
   return out;
 }
@@ -574,7 +579,22 @@ function evaluate(rows, pfn) {
   });
 
   // 3) 모델 예보
-  const omNow = await source("om", "Open-Meteo 7일 예보(4개 모델)", omForecast);
+  // 7일 예보는 한 시간에 한 번만 새로 받고(모델 자체가 몇 시간마다 갱신), 실패하면 12시간 안의 저장본을 쓴다.
+  // 저장본은 저장소가 아니라 GitHub Actions 캐시(cache/)에 둔다.
+  const CACHE = path.join(ROOT, "cache"); fs.mkdirSync(CACHE, { recursive: true });
+  const fcFile = path.join(CACHE, "om-forecast.json");
+  let fc = null; try { fc = JSON.parse(fs.readFileSync(fcFile, "utf8")); } catch {}
+  const fcAge = fc ? Date.now() - Date.parse(fc.fetchedAt) : Infinity;
+  let omNow = null;
+  if (fcAge < 55 * 60e3) { omNow = fc.data; sources.push({ key: "om", name: "Open-Meteo 7일 예보(4개 모델)", ok: true, note: `저장본 사용(${Math.round(fcAge / 60e3)}분 전 받음)` }); }
+  else {
+    omNow = await source("om", "Open-Meteo 7일 예보(4개 모델)", omForecast);
+    if (omNow) { try { fs.writeFileSync(fcFile, JSON.stringify({ fetchedAt: new Date().toISOString(), data: omNow })); } catch {} }
+    else if (fc && fcAge < 12 * 3600e3) {
+      omNow = fc.data;
+      const src = sources.find(x => x.key === "om"); src.error = `${src.error} · ${Math.round(fcAge / 60e3)}분 전 저장본으로 표시`;
+    }
+  }
   const actRows = Object.values(act.rows);
   const histDates = actRows.map(r => r.date).filter(d => d < TODAY).sort();
   let omHist = null;
