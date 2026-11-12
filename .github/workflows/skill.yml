@@ -19,6 +19,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # 7일 예보 저장본(한 시간에 한 번만 새로 받기 위함). 저장소에는 넣지 않는다.
+      - uses: actions/cache@v4
+        with:
+          path: cache
+          key: om-forecast-${{ github.run_id }}
+          restore-keys: om-forecast-
       - name: Score weather models
         run: SKILL_ONLY=1 BACKFILL=0 NTFY_TOPIC= DATA_GO_KR_KEY= node scripts/collect.mjs
       - name: Commit skill table only
