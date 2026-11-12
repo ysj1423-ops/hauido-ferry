@@ -332,7 +332,7 @@ function omFeat(hourly, date, time) {
   }
   if (wind == null) return null;
   // 안개 요인: 출항 3시간 전 ~ 2시간 후
-  let dewDep = null, rh = null, airSea = null, cl = [], wl = [];
+  let dewDep = null, rh = null, airSea = null, cl = [], wl = [], ss = [];
   for (let h = h0 - 3; h <= h0 + 2; h++) {
     const x = at(h); if (!x) continue;
     if (x.temp != null && x.dew != null) dewDep = Math.min(dewDep ?? 99, x.temp - x.dew);
@@ -340,10 +340,11 @@ function omFeat(hourly, date, time) {
     if (x.temp != null && x.sst != null) airSea = Math.max(airSea ?? -99, x.temp - x.sst);
     if (x.cloudLow != null) cl.push(x.cloudLow);
     if (x.wind != null) wl.push(x.wind);
+    if (x.sst != null) ss.push(x.sst);
   }
   const avg = a => a.length ? a.reduce((p, c) => p + c, 0) / a.length : null;
   const doy = (Date.parse(date + "T00:00:00Z") - Date.parse(date.slice(0, 4) + "-01-01T00:00:00Z")) / 864e5;
-  return { wind, gust, wave, vis, dewDep, rh, airSea, airSeaPos: airSea == null ? null : Math.max(0, airSea), seaFogIdx: (airSea == null || dewDep == null) ? null : Math.max(0, airSea) * (dewDep < 2 ? 1 : 0.3), cloudLow: avg(cl), windMean: avg(wl),
+  return { sst: avg(ss), wind, gust, wave, vis, dewDep, rh, airSea, airSeaPos: airSea == null ? null : Math.max(0, airSea), seaFogIdx: (airSea == null || dewDep == null) ? null : Math.max(0, airSea) * (dewDep < 2 ? 1 : 0.3), cloudLow: avg(cl), windMean: avg(wl),
     season: Math.cos(2 * Math.PI * (doy - 191) / 365), morning: h0 < 9 ? 1 : 0 };
 }
 
@@ -354,14 +355,17 @@ const SKILL_MODELS = ["best_match", "ecmwf_ifs025", "gfs_seamless", "jma_seamles
 const MODEL_KO = { best_match: "종합", ecmwf_ifs025: "유럽", gfs_seamless: "미국", jma_seamless: "일본", kma_seamless: "한국" };
 async function omPrevRuns(model, start, end) {
   const days = [1, 2, 3, 4, 5, 6, 7];
-  const vars = days.flatMap(d => [`wind_speed_10m_previous_day${d}`, `wind_gusts_10m_previous_day${d}`]).join(",");
+  const V = ["wind_speed_10m", "wind_gusts_10m", "visibility", "relative_humidity_2m", "temperature_2m"];
+  const vars = days.flatMap(d => V.map(v => `${v}_previous_day${d}`)).join(",");
   const out = {};
   // 한 번에 2년을 받으면 시간이 초과되어 3개월씩 나눠 받는다
-  for (let a = start; a <= end; a = addDays(a, 90)) {
-    const b = addDays(a, 89) < end ? addDays(a, 89) : end;
+  for (let a = start; a <= end; a = addDays(a, 60)) {
+    const b = addDays(a, 59) < end ? addDays(a, 59) : end;
     const j = await get(`https://previous-runs-api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=${vars}&models=${model}&wind_speed_unit=ms&timezone=Asia%2FSeoul&start_date=${a}&end_date=${b}`, { timeout: 90000, tries: 3 });
     const H = j.hourly, key = (v, d) => H[`${v}_previous_day${d}`] ?? H[`${v}_previous_day${d}_${model}`];
-    H.time.forEach((t, i) => { out[t] = { w: days.map(d => key("wind_speed_10m", d)?.[i] ?? null), g: days.map(d => key("wind_gusts_10m", d)?.[i] ?? null) }; });
+    const col = v => days.map(d => key(v, d));
+    const cw = col("wind_speed_10m"), cg = col("wind_gusts_10m"), cv = col("visibility"), ch = col("relative_humidity_2m"), ct = col("temperature_2m");
+    H.time.forEach((t, i) => { out[t] = { w: cw.map(a => a?.[i] ?? null), g: cg.map(a => a?.[i] ?? null), v: cv.map(a => a?.[i] ?? null), h: ch.map(a => a?.[i] ?? null), t: ct.map(a => a?.[i] ?? null) }; });
     await sleep(300);
   }
   return out;
@@ -376,20 +380,32 @@ function prevFeat(prev, date, time, lead) {
   }
   return wind == null ? null : { wind, gust };
 }
-async function modelSkill(rows, omModel) {
-  const start = rows.map(r => r.date).filter(d => d >= "2024-11-08").sort()[0];
-  if (!start) return null;
-  const end = addDays(TODAY, -1), prev = {};
-  for (const m of SKILL_MODELS) { prev[m] = await omPrevRuns(m, addDays(start, -1), end); await sleep(500); }
+function prevFogFeat(pm, pb, r, lead) {
+  const h0 = +r.time.slice(0, 2); let vis = null, rh = null, temp = null; const wl = [];
+  for (let h = h0 - 3; h <= h0 + 2; h++) {
+    const d = h < 0 ? addDays(r.date, -1) : h > 23 ? addDays(r.date, 1) : r.date, hh = ((h % 24) + 24) % 24, k = `${d}T${String(hh).padStart(2, "0")}:00`;
+    const x = pm[k], y = pb[k]; if (!x && !y) continue;
+    const pick = f => x?.[f]?.[lead - 1] ?? y?.[f]?.[lead - 1] ?? null;
+    const v = pick("v"), rr = pick("h"), t = pick("t"), w = pick("w");
+    if (h >= h0 - 1 && v != null) vis = Math.min(vis ?? 1e9, v);
+    if (rr != null) rh = Math.max(rh ?? 0, rr);
+    if (t != null) temp = Math.max(temp ?? -99, t);
+    if (w != null) wl.push(w);
+  }
+  if (!wl.length) return null;
+  return { vis, visLog: visLog(vis), rh, windMean: wl.reduce((a, b) => a + b, 0) / wl.length,
+    airSeaPos: temp == null || r.sst == null ? null : Math.max(0, temp - r.sst), morning: h0 < 9 ? 1 : 0 };
+}
+// 선행일별로 모델 점수와 조합 방식 고르기(공통)
+function scoreLeads(rows, start, prev, probOf) {
   const leads = {};
   for (let lead = 1; lead <= 7; lead++) {
     const sc = Object.fromEntries(SKILL_MODELS.map(m => [m, { se: 0, n: 0 }])); const pairs = [];
     for (const r of rows) {
       if (r.date < start) continue;
       const ps = {};
-      for (const m of SKILL_MODELS) { const f = prevFeat(prev[m], r.date, r.time, lead); if (!f) continue;
-        ps[m] = predict(omModel, addEx({ ...r, wind: f.wind, gust: f.gust, visLog: r.visLog, wave: r.wave })); }
-      if (Object.values(ps).some(v => v == null) || Object.keys(ps).length < SKILL_MODELS.length) continue;
+      for (const m of SKILL_MODELS) { const v = probOf(m, r, lead); if (v != null) ps[m] = v; }
+      if (Object.keys(ps).length < SKILL_MODELS.length) continue;
       for (const m of SKILL_MODELS) { sc[m].se += (ps[m] - r.y) ** 2; sc[m].n++; }
       pairs.push({ ps, y: r.y });
     }
@@ -397,20 +413,29 @@ async function modelSkill(rows, omModel) {
     const brier = Object.fromEntries(SKILL_MODELS.map(m => [m, sc[m].se / sc[m].n]));
     const inv = (k) => { const w = Object.fromEntries(SKILL_MODELS.map(m => [m, 1 / brier[m] ** k])); const t = Object.values(w).reduce((a, b) => a + b, 0); for (const m in w) w[m] /= t; return w; };
     const best = SKILL_MODELS.reduce((a, b) => brier[a] <= brier[b] ? a : b);
-    const cand = {
-      [`${MODEL_KO[best]}만`]: Object.fromEntries(SKILL_MODELS.map(m => [m, m === best ? 1 : 0])),
-      "단순 평균": Object.fromEntries(SKILL_MODELS.map(m => [m, 1 / SKILL_MODELS.length])),
-      "정확도 가중": inv(1), "정확도 강한 가중": inv(4),
-    };
+    const cand = { [`${MODEL_KO[best]}만`]: Object.fromEntries(SKILL_MODELS.map(m => [m, m === best ? 1 : 0])),
+      "단순 평균": Object.fromEntries(SKILL_MODELS.map(m => [m, 1 / SKILL_MODELS.length])), "정확도 가중": inv(1), "정확도 강한 가중": inv(4) };
     const score = Object.fromEntries(Object.entries(cand).map(([name, w]) => [name, pairs.reduce((s, x) => s + (SKILL_MODELS.reduce((a, m) => a + w[m] * x.ps[m], 0) - x.y) ** 2, 0) / pairs.length]));
     let chosen = Object.entries(score).sort((a, b) => a[1] - b[1])[0][0];
-    // 한 모델만 쓰면 그 모델의 극단값에 흔들리므로, 단일 모델이 3% 이상 확실히 나을 때만 단일 모델을 쓴다
     if (chosen.endsWith("만") && score["정확도 강한 가중"] <= score[chosen] * 1.03) chosen = "정확도 강한 가중";
     leads[lead] = { n: pairs.length, cancellations: pairs.filter(x => x.y).length,
-      brier: Object.fromEntries(Object.entries(brier).map(([m, v]) => [m, rd(v, 4)])),
-      methods: Object.fromEntries(Object.entries(score).map(([k, v]) => [k, rd(v, 4)])), chosen, weights: Object.fromEntries(Object.entries(cand[chosen]).map(([m, v]) => [m, rd(v, 3)])) };
+      brier: Object.fromEntries(Object.entries(brier).map(([m, v]) => [m, rd(v, 5)])),
+      methods: Object.fromEntries(Object.entries(score).map(([k, v]) => [k, rd(v, 5)])), chosen,
+      weights: Object.fromEntries(Object.entries(cand[chosen]).map(([m, v]) => [m, rd(v, 3)])) };
   }
-  return { computedOn: TODAY, from: start, to: end, leads };
+  return leads;
+}
+async function modelSkill(rows, omModel, fogRows, fogModel) {
+  const start = rows.map(r => r.date).filter(d => d >= "2024-11-08").sort()[0];
+  if (!start) return null;
+  const end = addDays(TODAY, -1), prev = {};
+  for (const m of SKILL_MODELS) { prev[m] = await omPrevRuns(m, addDays(start, -1), end); await sleep(500); }
+  const leads = scoreLeads(rows, start, prev, (m, r, lead) => { const f = prevFeat(prev[m], r.date, r.time, lead); if (!f) return null;
+    return predict(omModel, addEx({ ...r, wind: f.wind, gust: f.gust })); });
+  // 안개: 같은 방법으로 시정·습도·기온·바람을 모델별 '며칠 전 예보'로 바꿔 다시 맞혀 본다
+  const fogLeads = fogModel ? scoreLeads(fogRows, start, prev, (m, r, lead) => { const f = prevFogFeat(prev[m], prev.best_match, r, lead); if (!f) return null;
+    return predict(fogModel, { ...r, ...f, vesselId: "all" }); }) : null;
+  return { computedOn: TODAY, from: start, to: end, leads, fogLeads };
 }
 
 // ---------- 4. 모델: 로지스틱 회귀 (배별 절편 + 공통 기울기) ----------
@@ -622,11 +647,12 @@ function evaluate(rows, pfn) {
 
   // 기상 모델별 실력: 일주일에 한 번 다시 계산(실패하면 지난 결과 유지)
   let skill = readJSON("model-skill.json", null);
-  if (enough && (!skill || skill.computedOn <= addDays(TODAY, -7) || process.env.SKILL === "1")) {
-    const fresh = await source("skill", "기상 모델별 정확도 평가", () => modelSkill(train, models.om));
+  if (enough && (!skill || skill.computedOn <= addDays(TODAY, -7) || !skill.fogLeads || process.env.SKILL === "1")) {
+    const fresh = await source("skill", "기상 모델별 정확도 평가", () => modelSkill(train, models.om, trainFog, enoughFog ? models.fog : null));
     if (fresh?.leads && Object.keys(fresh.leads).length) { skill = fresh; writeJSON("model-skill.json", skill); }
   }
   const weightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.leads?.[lead] || null; };
+  const fogWeightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.fogLeads?.[lead] || null; };
 
   // 배별 실적 요약
   const vesselStats = [...new Set(actRows.map(r => r.vessel))].map(name => {
@@ -661,7 +687,7 @@ function evaluate(rows, pfn) {
     const sailings = sch.list.map(s => {
       const hour = +s.time.slice(0, 2);
       const k = kmaNow ? kmaFor(kmaNow.periods, date, hour) : null;
-      const feats = {}, probs = {}, windProbs = {};
+      const feats = {}, probs = {}, windProbs = {}, fogProbs = {};
       let fogP = null, fogF = null;
       if (omNow) {
         const fb = omFeat(omNow.best_match || Object.values(omNow)[0], date, s.time);
@@ -672,7 +698,9 @@ function evaluate(rows, pfn) {
           const r = addEx({ vesselId: s.vesselId, ...f, visLog: visLog(f.vis), kmaWind: k?.windMax ?? null, kmaWave: k?.waveMax ?? null });
           const pw = enough ? predict(k ? models.full : models.om, r) : ruleProb(r);
           windProbs[mod] = pw;
-          probs[mod] = pw == null ? null : 1 - (1 - pw) * (1 - (fogP ?? 0));
+          const rf = { ...f, date, vesselId: "all", visLog: visLog(f.vis) };
+          fogProbs[mod] = enoughFog ? predict(models.fog, rf) : fogRule(rf);
+          probs[mod] = pw == null ? null : 1 - (1 - pw) * (1 - (fogProbs[mod] ?? fogP ?? 0));
         }
       }
       const main = feats.best_match || Object.values(feats)[0] || null;
@@ -681,9 +709,13 @@ function evaluate(rows, pfn) {
       const wv = Object.values(windProbs).filter(x => x != null);
       let pWind = wv.length ? wv.reduce((a, b) => a + b, 0) / wv.length : null; // 바람·파도 확률도 같은 방식
       if (sk) { let ws = 0, acc = 0; for (const [m, w] of Object.entries(sk.weights)) if (windProbs[m] != null && w > 0) { acc += w * windProbs[m]; ws += w; } if (ws > 0) pWind = acc / ws; }
-      // 최종 확률: 과거 성적으로 고른 방식(가장 잘 맞힌 모델 또는 정확도 가중 평균). 성적표가 없으면 단순 평균
-      let p = null;
-      if (sk) { let ws = 0, acc = 0; for (const [m, w] of Object.entries(sk.weights)) if (probs[m] != null && w > 0) { acc += w * probs[m]; ws += w; } if (ws > 0) p = acc / ws; }
+      // 안개 확률도 안개 성적으로 고른 방식으로
+      const skf = fogWeightsFor(date);
+      const fv = Object.values(fogProbs).filter(x => x != null);
+      if (fv.length) fogP = fv.reduce((a, b) => a + b, 0) / fv.length;
+      if (skf) { let ws = 0, acc = 0; for (const [m, w] of Object.entries(skf.weights)) if (fogProbs[m] != null && w > 0) { acc += w * fogProbs[m]; ws += w; } if (ws > 0) fogP = acc / ws; }
+      // 최종 확률 = 바람·파도(바람 성적 방식)와 안개(안개 성적 방식) 중 하나라도 일어날 확률
+      let p = pWind != null ? 1 - (1 - pWind) * (1 - (fogP ?? 0)) : null;
       if (p == null) p = pv.length ? pv.reduce((a, b) => a + b, 0) / pv.length : (k ? ruleProb({ kmaWind: k.windMax, kmaWave: k.waveMax }) : null);
       // 비슷한 과거 배편
       let similar = [];
@@ -703,7 +735,7 @@ function evaluate(rows, pfn) {
           ...(pv.length > 1 && Math.max(...pv) - Math.min(...pv) >= 0.4 ? ["disagree"] : []),
           ...((() => { const m = !k && kmaMidNow ? kmaFor(kmaMidNow, date, hour) : null; return m && m.waveMax >= 3 ? ["midRough"] : []; })()),
         ],
-        method: sk ? sk.chosen : "단순 평균",
+        method: sk ? sk.chosen : "단순 평균", fogMethod: skf ? skf.chosen : "단순 평균",
         p: p == null ? null : rd(p, 3), pWind: rd(pWind, 3), pFog: rd(fogP, 3),
         fog: fogF ? { visKm: fogF.vis == null ? null : rd(fogF.vis / 1000), dewDep: rd(fogF.dewDep), rh: rd(fogF.rh, 0), airSea: rd(fogF.airSea), cloudLow: rd(fogF.cloudLow, 0), wind: rd(fogF.windMean) } : null,
         pRange: pv.length > 1 ? [rd(Math.min(...pv), 3), rd(Math.max(...pv), 3)] : null,
@@ -773,7 +805,7 @@ function evaluate(rows, pfn) {
         monthRatePct: models.fogMonthRate || null },
     },
     vesselStats,
-    modelSkill: skill ? { computedOn: skill.computedOn, from: skill.from, to: skill.to, leads: skill.leads } : null,
+    modelSkill: skill ? { computedOn: skill.computedOn, from: skill.from, to: skill.to, leads: skill.leads, fogLeads: skill.fogLeads || null } : null,
     historyCoverage: { daysCollected: Object.keys(act.done).length, target: CFG.historyDays },
     roundTrip: { offsets: rt.offsets, basis: rt.basis, computedOn: rt.computedOn || null, patterns: rt.patterns || {}, live: rt.live || {}, todayDep: rt.today || {}, liveDate: rt.liveDate || null, liveAt: rt.liveAt || null },
     apiState,
