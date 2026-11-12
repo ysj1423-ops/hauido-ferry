@@ -418,7 +418,8 @@ function scoreLeads(rows, start, prev, probOf) {
     const score = Object.fromEntries(Object.entries(cand).map(([name, w]) => [name, pairs.reduce((s, x) => s + (SKILL_MODELS.reduce((a, m) => a + w[m] * x.ps[m], 0) - x.y) ** 2, 0) / pairs.length]));
     let chosen = Object.entries(score).sort((a, b) => a[1] - b[1])[0][0];
     if (chosen.endsWith("만") && score["정확도 강한 가중"] <= score[chosen] * 1.03) chosen = "정확도 강한 가중";
-    leads[lead] = { n: pairs.length, cancellations: pairs.filter(x => x.y).length,
+    const rate = pairs.reduce((a, x) => a + x.y, 0) / pairs.length;
+    leads[lead] = { n: pairs.length, cancellations: pairs.filter(x => x.y).length, baseline: rd(pairs.reduce((a, x) => a + (rate - x.y) ** 2, 0) / pairs.length, 5),
       brier: Object.fromEntries(Object.entries(brier).map(([m, v]) => [m, rd(v, 5)])),
       methods: Object.fromEntries(Object.entries(score).map(([k, v]) => [k, rd(v, 5)])), chosen,
       weights: Object.fromEntries(Object.entries(cand[chosen]).map(([m, v]) => [m, rd(v, 3)])) };
@@ -646,10 +647,13 @@ function evaluate(rows, pfn) {
   }
 
   // 기상 모델별 실력: 일주일에 한 번 다시 계산(실패하면 지난 결과 유지)
+  // 모델 성적 계산은 20분쯤 걸려 별도 작업(skill.yml, SKILL_ONLY=1)에서 하고, 평소 수집은 결과만 읽는다
   let skill = readJSON("model-skill.json", null);
-  if (enough && (!skill || skill.computedOn <= addDays(TODAY, -7) || !skill.fogLeads || process.env.SKILL === "1")) {
-    const fresh = await source("skill", "기상 모델별 정확도 평가", () => modelSkill(train, models.om, trainFog, enoughFog ? models.fog : null));
-    if (fresh?.leads && Object.keys(fresh.leads).length) { skill = fresh; writeJSON("model-skill.json", skill); }
+  if (process.env.SKILL_ONLY === "1") {
+    if (!enough) { log("학습 자료 부족 → 모델 성적 계산 생략"); return; }
+    const fresh = await modelSkill(train, models.om, trainFog, enoughFog ? models.fog : null);
+    if (fresh?.leads && Object.keys(fresh.leads).length) { writeJSON("model-skill.json", fresh); log("모델 성적 저장", fresh.computedOn); }
+    return;
   }
   const weightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.leads?.[lead] || null; };
   const fogWeightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.fogLeads?.[lead] || null; };

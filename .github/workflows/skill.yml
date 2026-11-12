@@ -1,0 +1,31 @@
+name: skill
+# 기상 모델별 성적(바람·파도, 안개)을 다시 계산한다(20분쯤 걸림). 일주일에 한 번.
+# GitHub 예약이 빠지면 평소 수집(collect)이 성적표가 7일 넘게 묵었을 때 이 작업을 시작시킨다.
+on:
+  schedule:
+    - cron: "40 18 * * 0"   # 월요일 03:40 KST
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: skill
+  cancel-in-progress: false
+jobs:
+  skill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Score weather models
+        run: SKILL_ONLY=1 BACKFILL=0 NTFY_TOPIC= DATA_GO_KR_KEY= node scripts/collect.mjs
+      - name: Commit skill table only
+        run: |
+          git config user.name "ferry-bot"
+          git config user.email "ferry-bot@users.noreply.github.com"
+          git add docs/data/model-skill.json
+          git diff --cached --quiet && exit 0
+          git commit -q -m "data: 모델 성적 $(TZ=Asia/Seoul date +%m-%d)"
+          for i in 1 2 3 4 5; do git pull -q --rebase -X theirs origin main && git push -q && break; sleep 10; done
