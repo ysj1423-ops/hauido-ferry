@@ -216,6 +216,9 @@ const isOut=s=>s.out??/목포/.test(s.port||"");
 const liveFresh=()=>!!D?.roundTrip?.liveAt&&Date.now()-Date.parse(D.roundTrip.liveAt)<40*60e3;
 function verdict(s){
   const O=s.official;
+  // 왕복의 다른 구간이 공식 통제·비운이면 이 구간도 못 간다(아직 출항 전일 때)
+  if(s.linked&&!(O&&/운항중|완료/.test(O.progress||""))&&!(O&&["cancelled","nonoperating"].includes(O.outcome)))
+    return s.linked.outcome==="cancelled"?{cls:"stop",txt:"결항 예상",lv:2}:{cls:"na",txt:"비운항 예상",lv:-1};
   if(O){const o=O.outcome,dep=/운항중|완료/.test(O.progress||"")||(liveFresh()&&s.live&&s.live.state!=="before"),F=O.forecast;
     if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(O.status||"통제"),lv:2};
     if(o==="nonoperating")return{cls:"na",txt:"비운항",lv:-1};
@@ -307,7 +310,7 @@ function renderList(){
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=liveFresh()&&s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
-    const sub=lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(`결항 ${pct(s.p)}`+((s.flags||[]).includes("disagree")?` · 모델 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:(s.flags||[]).includes("midRough")?` · 파고 ${esc(s.kma?.wave)}m`:""))+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const sub=s.linked&&verdict(s).txt.endsWith("예상")&&!/^운항/.test(verdict(s).txt)?`${s.linked.time} ${esc(s.linked.port)}편 ${esc(s.linked.status)}${s.linked.reason?"("+esc(s.linked.reason)+")":""}에 따름`:lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(`결항 ${pct(s.p)}`+((s.flags||[]).includes("disagree")?` · 모델 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:(s.flags||[]).includes("midRough")?` · 파고 ${esc(s.kma?.wave)}m`:""))+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
@@ -317,7 +320,7 @@ function renderList(){
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
   $("hero").innerHTML=summary(d);
   if(mode==="table"){$("list").className="list";$("list").innerHTML=ss.length?`<div class="panel tw"><table class="ttab"><tr><th>시각</th><th>배</th><th>구간</th><th>상태</th><th>비고</th></tr>${ss.map(s=>{const v=verdict(s),out=isOut(s);
-      const note=liveFresh()&&s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
+      const note=s.linked&&/예상$/.test(v.txt)&&!/^운항/.test(v.txt)?`${s.linked.time} ${s.linked.port}편 ${s.linked.status}에 따름`:liveFresh()&&s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
       return `<tr><td class="tm">${s.approx?"약 ":""}${s.time}</td><td>${esc(s.vessel)}</td><td>${esc(s.port)} → ${esc(out?s.route.replace("목포-",""):"목포")}</td><td><span class="s ${v.cls}">${esc(v.txt)}</span></td><td>${esc(note)}</td></tr>`}).join("")}</table></div>`:`<p class="empty">조건에 맞는 배편이 없습니다</p>`;return}
   $("list").className="list cards";
   $("list").innerHTML=cards||`<p class="empty">조건에 맞는 배편이 없습니다</p>`;
@@ -347,7 +350,8 @@ function detail(s){
   const L=liveFresh()?s.live:null;
   const chain=L&&L.chain&&L.chain.length?`<div><span class="lbl">운항 진행 (${L.at?esc(L.at)+" 기록":"출항 전"}${L.delay>=5?` · 평소보다 ${L.delay}분 늦음`:""})</span>
     <ol class="chain">${L.chain.map(c=>`<li class="${c.passed?"done":c.here?"here":""}"><i></i><span>${esc(c.port)}</span><small>${c.at?esc(c.at):c.eta?"약 "+esc(c.eta):""}</small></li>`).join("")}</ol></div>`:"";
-  return `<div class="more">${viaNote}${chain}
+  const tripNote=s.trip&&s.trip.legs.length>1?`<div><span class="lbl">왕복으로 판단 (목포에서 나가 섬을 들러 목포로 돌아오는 한 운항)</span><br>${s.trip.legs.map(l=>`${l.time} ${esc(l.port)} 출발 ${l.p==null?"":pct(l.p)}`).join(" → ")}${s.pSelf!=null&&s.p!=null?`<br><span class="lbl">이 구간만 ${pct(s.pSelf)} · 왕복 중 가장 위험한 구간 ${pct(s.p)} (화면 표시 값)</span>`:""}${s.linked?`<br><b>${s.linked.time} ${esc(s.linked.port)}편이 공식 '${esc(s.linked.status)}'${s.linked.reason?"("+esc(s.linked.reason)+")":""}이라 이 구간도 운항하기 어렵습니다.</b>`:""}</div>`:"";
+  return `<div class="more">${tripNote}${viaNote}${chain}
     <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>지점 모델 파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
     ${k?`<div><span class="lbl">기상청 ${esc(k.kind)} 해상예보 (${esc(k.area)}, ${esc(k.part)})</span><br>${k.wind?`풍속 ${esc(k.wind)} m/s · `:""}파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 해상예보 범위 밖</div>`}
     ${s.pWind!=null||s.pFog!=null?`<div><span class="lbl">결항 원인별 확률</span><br>바람·파도 ${pct(s.pWind)} <small class="lbl">(${esc(s.method||"단순 평균")})</small> · 안개 ${pct(s.pFog)} <small class="lbl">(${esc(s.fogMethod||"단순 평균")})</small></div>`:""}
@@ -366,6 +370,7 @@ function renderWhy(){
   <section class="panel"><h2>예측 방법</h2>
     <p>각 배편 출항 시각 앞뒤의 풍속·돌풍·파고·시정 예보와 기상청 해상예보를, 같은 배의 과거 실제 운항·통제 기록과 짝지어 학습한 확률입니다. 4개 기상 모델 결과가 다르면 확률 범위로 보여줍니다. KOMSA가 당일 현황이나 다음 날 운항예보(매일 12시경)를 발표하면 예상 대신 공식 결과를 표시합니다.</p>
     <p class="lbl">현재: ${esc(m.mode)} · 학습 배편 ${m.trainRows}편(결항 ${m.trainCancelled}편) · ${m.trainFrom??"–"} ~ ${m.trainTo??"–"}</p>
+    <p class="lbl">모든 배는 목포에서 나가 목포로 돌아오므로, 목포 출발편과 그 뒤 섬 출발편을 한 왕복으로 묶어 같은 확률(더 위험한 구간의 확률)을 보여주고, 한쪽이 공식 통제·비운이면 다른 쪽도 '결항 예상'으로 표시합니다. 이미 출항한 구간은 빼고 계산합니다.</p>
     <p class="lbl">기준: 결항 확률(과거 성적이 가장 좋았던 모델 조합) 20% 미만 운항 예상 · 20~50% 주의 · 50% 이상 결항 위험. 모델끼리 40%p 이상 차이 나면 '예보 엇갈림', 기상청 중기 파고가 3 m 이상이면 최소 '주의'.</p>
   </section>
   <section class="panel"><h2>맞았는지 검증</h2>

@@ -770,6 +770,39 @@ function evaluate(rows, pfn) {
         similar,
       };
     });
+    // 왕복 묶기: 모든 배는 목포에서 나가 섬을 들러 목포로 돌아온다.
+    // 같은 배의 목포 출발편과 그 뒤 섬 출발편(들)을 한 왕복으로 묶어,
+    //  - 확률: 아직 출항하지 않은 구간 중 가장 위험한 구간의 확률을 왕복 전체에 같이 쓴다
+    //    (같은 날 2~3시간 차이라 날씨가 거의 같아서, 서로 독립으로 곱하면 위험을 부풀린다)
+    //  - 공식: 한쪽이 통제·비운이면 아직 출항 안 한 다른 쪽도 '결항 예상'으로 표시한다
+    const departed = x => /운항중|완료/.test(x.official?.progress || "") || (x.official?.kind === "today" && rt.live?.[`${x.vessel}|${x.via || x.time}`]?.state && rt.live[`${x.vessel}|${x.via || x.time}`].state !== "before");
+    const groups = [];
+    for (const v of [...new Set(sailings.map(x => x.vessel))]) {
+      let cur = null;
+      for (const x of sailings.filter(y => y.vessel === v).sort((a, b) => a.time.localeCompare(b.time))) {
+        if (x.port === "목포" || !cur) { cur = []; groups.push(cur); }
+        cur.push(x);
+      }
+    }
+    for (const g of groups) {
+      if (g.length < 2) continue;
+      const tag = g.map(x => `${x.time} ${x.port}`).join(" → ");
+      const live = g.filter(x => !departed(x));
+      const ps = live.map(x => x.p).filter(x => x != null);
+      const pTrip = ps.length ? Math.max(...ps) : null;
+      const flags = [...new Set(g.flatMap(x => x.flags || []))];
+      // 공식 통제·비운 중 '아직 출항 안 한' 구간에 영향
+      const stop = g.find(x => x.official && ["cancelled", "nonoperating"].includes(x.official.outcome));
+      for (const x of g) {
+        x.trip = { legs: g.map(y => ({ time: y.time, port: y.port, p: y.p == null ? null : rd(y.pSelf ?? y.p, 3) })), text: tag };
+        if (departed(x)) continue;
+        x.pSelf = x.p;
+        if (pTrip != null) x.p = rd(pTrip, 3);
+        x.flags = flags;
+        if (stop && stop !== x && !(x.official && ["cancelled", "nonoperating"].includes(x.official.outcome)))
+          x.linked = { time: stop.time, port: stop.port, status: stop.official.status, reason: stop.official.reason || "", outcome: stop.official.outcome };
+      }
+    }
     // 대기 배(엔젤): 주력 배(퍼스트엔젤)가 그날 비운항·통제일 때나, 공식으로 실제 운항할 때만 보여준다
     const offMain = new Set(Object.values(CFG.standby || {}).filter(m => sailings.some(x => x.vessel === m && x.official && ["nonoperating", "cancelled"].includes(x.official.outcome))));
     const shown = sailings.filter(x => { const main = CFG.standby?.[x.vessel]; if (!main) return true;
