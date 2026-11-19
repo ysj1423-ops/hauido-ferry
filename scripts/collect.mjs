@@ -838,6 +838,19 @@ function evaluate(rows, pfn) {
     });
   }
 
+  // 연속 전면 통제 뒤 운항 재개 통계(가설 확인용): 하루 전체가 통제된 날이 2일 이상 이어진 다음 날 1편이라도 떴는지
+  const dayCnt = {};
+  for (const r of actRows) { if (r.date >= TODAY) continue; const x = dayCnt[r.date] ||= { o: 0, c: 0 }; if (r.outcome === "operated") x.o++; else if (r.outcome === "cancelled") x.c++; }
+  const susp = d => dayCnt[d] && dayCnt[d].o === 0 && dayCnt[d].c > 0;
+  const streakBefore = d => { let k = 0; while (susp(addDays(d, -(k + 1)))) k++; return k; };
+  // 비교: 전면 통제 1일 뒤 vs 2일 이상 뒤, 다음 날 1편이라도 운항했는지(같은 기준으로 비교해야 의미가 있다)
+  const resume = { after1: [0, 0], after2: [0, 0], cases: [] };
+  for (const d of Object.keys(dayCnt).sort()) {
+    const k = streakBefore(d); if (!k) continue;
+    const g = resume[k >= 2 ? "after2" : "after1"]; g[0]++; if (dayCnt[d].o > 0) g[1]++;
+    if (k >= 2) resume.cases.push({ date: d, streak: k, operated: dayCnt[d].o, cancelled: dayCnt[d].c });
+  }
+
   // KOMSA 다음 날 운항예보 보관(처음 발표·마지막 발표, 그때의 날씨 예상 확률 포함) → 실제 확정 결과와 비교
   let fArc = readJSON("forecast-archive.json", null);
   if (!fArc) { try { fArc = JSON.parse(fs.readFileSync(path.join(ROOT, "seed", "forecast-archive.json"), "utf8")); } catch { fArc = {}; } } // 첫 실행: 지난 기록에서 복원한 자료로 시작
@@ -876,7 +889,7 @@ function evaluate(rows, pfn) {
   const latest = {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
-    days: out, changeLog, sources, forecastMemo: memo, forecastCheck: fCheck,
+    days: out, changeLog, sources, forecastMemo: memo, forecastCheck: fCheck, resume,
     openMeteoRequests: om.stats,
     model: {
       mode: enough ? "학습 모델" : "기본 규칙(학습 자료 부족)",

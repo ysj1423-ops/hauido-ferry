@@ -390,6 +390,12 @@ function renderWhy(){
     ${Object.keys(D.forecastCheck.byRisk).length?`<p class="lbl">전날 '운항' 예보였을 때, 이 사이트의 날씨 위험별 실제 통제: ${Object.entries(D.forecastCheck.byRisk).map(([b,x])=>`${b} ${x.cancelled}/${x.n}편`).join(" · ")}</p>`:""}
     ${D.forecastCheck.misses.length?`<p class="lbl">'운항' 예보 → 실제 통제: ${D.forecastCheck.misses.map(m=>`${m.date.slice(5)} ${m.time} ${esc(m.vessel)}${m.p!=null?" (날씨 위험 "+pct(m.p)+")":""}`).join(", ")}</p>`:""}`
     :`<p>11/19부터 KOMSA 전날 예보를 저장하기 시작했습니다. 하루가 지나 실제 결과가 확정되면 여기서 비교합니다.</p>`}</section>`:""}
+  ${D.resume?.after1?`<section class="panel"><h2>연속 통제 뒤 운항 재개</h2>
+    <p>'전면 통제가 2일 이상 이어지면 날씨가 조금 풀릴 때 한 번쯤은 운항한다'는 예상을 확인하는 표입니다. 전면 통제 다음 날 1편이라도 운항한 비율을 비교합니다.</p>
+    <div class="tw"><table><tr><th>앞선 전면 통제</th><th>다음 날 1편 이상 운항</th></tr>
+      <tr><td>1일</td><td>${D.resume.after1[1]}/${D.resume.after1[0]}일 (${D.resume.after1[0]?Math.round(D.resume.after1[1]/D.resume.after1[0]*100):0}%)</td></tr>
+      <tr><td>2일 이상</td><td>${D.resume.after2[1]}/${D.resume.after2[0]}일 (${D.resume.after2[0]?Math.round(D.resume.after2[1]/D.resume.after2[0]*100):0}%)</td></tr></table></div>
+    <p class="lbl">두 비율이 비슷하면 연속 통제 자체가 운항 재개를 앞당기지는 않는다는 뜻입니다. 지금은 차이가 없어 예측에 넣지 않았습니다. 2일 이상 사례: ${D.resume.cases.map(c=>`${c.date.slice(2)}(${c.operated}편 운항)`).join(", ")}</p></section>`:""}
   ${D.modelSkill?.leads?`<section class="panel"><h2>기상 모델별 정확도</h2>
     <p>Open-Meteo에 보관된 각 모델의 '며칠 전 예보'로 ${esc(D.modelSkill.from)}~${esc(D.modelSkill.to)} 실제 운항 결과를 다시 맞혀 본 점수입니다(오차, 낮을수록 정확). 며칠 전 예보인지에 따라 가장 잘 맞힌 방식을 골라 화면의 확률에 씁니다. 일주일마다 다시 계산합니다.</p>
     <div class="tw"><table><tr><th>며칠 전</th>${["best_match","ecmwf_ifs025","gfs_seamless","jma_seamless"].map(m=>`<th>${({best_match:"종합",ecmwf_ifs025:"유럽",gfs_seamless:"미국",jma_seamless:"일본"})[m]}</th>`).join("")}<th>평소 비율만</th><th>쓰는 방식</th></tr>
