@@ -792,14 +792,14 @@ function evaluate(rows, pfn) {
       const pTrip = ps.length ? Math.max(...ps) : null;
       const flags = [...new Set(g.flatMap(x => x.flags || []))];
       // 공식 통제·비운 중 '아직 출항 안 한' 구간에 영향
-      const stop = g.find(x => x.official && ["cancelled", "nonoperating"].includes(x.official.outcome));
+      const stop = g.find(x => x.official && ["cancelled", "nonoperating"].includes(x.official.outcome)) || g.find(x => x.official?.outcome === "pending");
       for (const x of g) {
         x.trip = { legs: g.map(y => ({ time: y.time, port: y.port, p: y.p == null ? null : rd(y.pSelf ?? y.p, 3) })), text: tag };
         if (departed(x)) continue;
         x.pSelf = x.p;
         if (pTrip != null) x.p = rd(pTrip, 3);
         x.flags = flags;
-        if (stop && stop !== x && !(x.official && ["cancelled", "nonoperating"].includes(x.official.outcome)))
+        if (stop && stop !== x && !(x.official && ["cancelled", "nonoperating", "pending"].includes(x.official.outcome)))
           x.linked = { time: stop.time, port: stop.port, status: stop.official.status, reason: stop.official.reason || "", outcome: stop.official.outcome };
       }
     }
@@ -838,6 +838,32 @@ function evaluate(rows, pfn) {
     });
   }
 
+  // KOMSA 다음 날 운항예보 보관(처음 발표·마지막 발표, 그때의 날씨 예상 확률 포함) → 실제 확정 결과와 비교
+  let fArc = readJSON("forecast-archive.json", null);
+  if (!fArc) { try { fArc = JSON.parse(fs.readFileSync(path.join(ROOT, "seed", "forecast-archive.json"), "utf8")); } catch { fArc = {}; } } // 첫 실행: 지난 기록에서 복원한 자료로 시작
+  if (live.tomorrow?.date && live.tomorrow.rows.length) {
+    const d = live.tomorrow.date, day = out.find(x => x.date === d);
+    const snap = { updated: live.tomorrow.updated, at: new Date().toISOString(), rows: Object.fromEntries(live.tomorrow.rows.map(r => {
+      const sx = day?.sailings.find(x => x.time === r.time && x.vessel === r.vessel && x.port === r.port && !x.via);
+      return [`${r.time}|${r.vessel}|${r.port}`, { status: r.status, reason: r.reason || "", p: sx?.pSelf ?? sx?.p ?? null }]; })) };
+    fArc[d] ||= {}; fArc[d].first ||= snap; fArc[d].last = snap;
+  }
+  writeJSON("forecast-archive.json", fArc);
+  const fCheck = { days: 0, matrix: {}, misses: [], byRisk: {} };
+  for (const [d, a] of Object.entries(fArc)) {
+    if (d >= TODAY || !a.last) continue;
+    const acts = actRows.filter(r => r.date === d); if (!acts.length) continue;
+    fCheck.days++;
+    for (const [k, f] of Object.entries(a.last.rows)) {
+      const [time, vessel, port] = k.split("|"), act = acts.find(r => r.time === time && r.vessel === vessel && r.port === port); if (!act) continue;
+      const fs = classify(f.status), as = act.outcome;
+      fCheck.matrix[fs] ||= {}; fCheck.matrix[fs][as] = (fCheck.matrix[fs][as] || 0) + 1;
+      if (fs === "operated" && as === "cancelled") fCheck.misses.push({ date: d, time, vessel, port, reason: act.reason, p: f.p == null ? null : rd(f.p, 2) });
+      if (fs === "operated" && f.p != null && ["operated", "cancelled"].includes(as)) { const b = f.p >= 0.5 ? "50% 이상" : f.p >= 0.2 ? "20~50%" : "20% 미만"; const x = fCheck.byRisk[b] ||= { n: 0, cancelled: 0 }; x.n++; if (as === "cancelled") x.cancelled++; }
+    }
+  }
+  fCheck.misses = fCheck.misses.slice(-15);
+
   // 7) 저장 — 주요 자료(KOMSA 당일·다음 날, 기상청, 모델 예보)가 한꺼번에 실패하면 일시적인 접속 장애로 보고 이전 자료를 그대로 둔다
   const core = ["komsaToday", "komsaTomorrow", "kma", "om"];
   if (prev && core.every(k => sources.find(x => x.key === k && !x.ok))) {
@@ -850,7 +876,7 @@ function evaluate(rows, pfn) {
   const latest = {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
-    days: out, changeLog, sources, forecastMemo: memo,
+    days: out, changeLog, sources, forecastMemo: memo, forecastCheck: fCheck,
     openMeteoRequests: om.stats,
     model: {
       mode: enough ? "학습 모델" : "기본 규칙(학습 자료 부족)",
