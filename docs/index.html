@@ -217,8 +217,8 @@ const liveFresh=()=>!!D?.roundTrip?.liveAt&&Date.now()-Date.parse(D.roundTrip.li
 function verdict(s){
   const O=s.official;
   // 왕복의 다른 구간이 공식 통제·비운이면 이 구간도 못 간다(아직 출항 전일 때)
-  if(s.linked&&!(O&&/운항중|완료/.test(O.progress||""))&&!(O&&["cancelled","nonoperating"].includes(O.outcome)))
-    return s.linked.outcome==="cancelled"?{cls:"stop",txt:"결항 예상",lv:2}:{cls:"na",txt:"비운항 예상",lv:-1};
+  if(s.linked&&!(O&&/운항중|완료/.test(O.progress||""))&&!(O&&["cancelled","nonoperating","pending"].includes(O.outcome)))
+    return s.linked.outcome==="cancelled"?{cls:"stop",txt:"결항 예상",lv:2}:s.linked.outcome==="pending"?{cls:"warn",txt:"검토 연동",lv:1}:{cls:"na",txt:"비운항 예상",lv:-1};
   if(O){const o=O.outcome,dep=/운항중|완료/.test(O.progress||"")||(liveFresh()&&s.live&&s.live.state!=="before"),F=O.forecast;
     if(o==="cancelled")return{cls:"off stop",txt:"공식 "+(O.status||"통제"),lv:2};
     if(o==="nonoperating")return{cls:"na",txt:"비운항",lv:-1};
@@ -227,7 +227,11 @@ function verdict(s){
       if(O.kind==="today"&&dep)return{cls:"off go",txt:/완료/.test(O.progress||"")?"운항 완료":"정상 출항",lv:0};
       if(O.kind==="today"&&F&&F.outcome==="cancelled")return{cls:"stop",txt:`${F.status} (전날 예보)`,lv:2};
       if(O.kind==="today"&&F&&F.outcome==="nonoperating")return{cls:"na",txt:`${F.status} (전날 예보)`,lv:-1};
-      return{cls:"off go",txt:O.kind==="tomorrow"?"운항 예보":"운항 예정",lv:0};}
+      // 공식은 운항이어도 날씨 위험이 높으면 함께 알린다(다음 날 예보·당일 출항 전은 바뀔 수 있음)
+      const base=O.kind==="tomorrow"?"운항 예보":"운항 예정";
+      if(s.p!=null&&s.p>=.5)return{cls:"stop",txt:base+" · 결항 위험",lv:1,risk:true};
+      if(s.p!=null&&s.p>=.2)return{cls:"warn",txt:base+" · 주의",lv:1,risk:true};
+      return{cls:"off go",txt:base,lv:0};}
     return{cls:"na",txt:O.status||"확인 중",lv:-1}}
   if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
   const fl=s.flags||[];
@@ -310,7 +314,9 @@ function renderList(){
   const cards=ss.map(s=>{const v=verdict(s);const id=d.date+s.time+s.vessel+s.port;const out=isOut(s);
     const lv=liveFresh()&&s.live&&s.live.state!=="before"?s.live:null;
     const F=s.official?.forecast,pre=s.official?.kind==="today"&&s.official.outcome==="operated"&&!/운항중|완료/.test(s.official.progress||"");
-    const sub=s.linked&&verdict(s).txt.endsWith("예상")&&!/^운항/.test(verdict(s).txt)?`${s.linked.time} ${esc(s.linked.port)}편 ${esc(s.linked.status)}${s.linked.reason?"("+esc(s.linked.reason)+")":""}에 따름`:lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(`결항 ${pct(s.p)}`+((s.flags||[]).includes("disagree")?` · 모델 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:(s.flags||[]).includes("midRough")?` · 파고 ${esc(s.kma?.wave)}m`:""))+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
+    const pm=D.forecastCheck?.matrix?.pending,pn=pm?Object.values(pm).reduce((a,b)=>a+b,0):0;
+    const pendNote=pn>=5?`지난 검토 ${pn}편 중 ${pm.cancelled||0}편 통제`:"";
+    const sub=s.official?.outcome==="pending"&&pendNote?pendNote:verdict(s).txt==="검토 연동"&&pendNote?`${s.linked.time} ${esc(s.linked.port)}편 검토 · ${pendNote}`:verdict(s).risk?`날씨 위험 ${pct(s.p)} · 변경 가능`:s.linked&&/예상$|연동$/.test(verdict(s).txt)&&!/^운항/.test(verdict(s).txt)?`${s.linked.time} ${esc(s.linked.port)}편 ${esc(s.linked.status)}${s.linked.reason?"("+esc(s.linked.reason)+")":""}에 따름`:lv?`<span class="pos ${lv.state}">${esc(lv.text)}</span>`:F&&pre?(F.outcome==="pending"?`전날 '${esc(F.status)}' → 오늘 '${esc(s.official.status)}'`:`오늘 현황은 아직 '${esc(s.official.status)}'`):s.official?(s.official.outcome==="nonoperating"?"사유: "+esc(s.official.reason||s.official.forecast?.reason||"미기재"):[s.official.reason,s.official.progress].filter(Boolean).join(" · ")||(s.official.kind==="tomorrow"?"다음 날 예보":"당일 현황")):(`결항 ${pct(s.p)}`+((s.flags||[]).includes("disagree")?` · 모델 ${pct(s.pRange[0])}~${pct(s.pRange[1])}`:(s.flags||[]).includes("midRough")?` · 파고 ${esc(s.kma?.wave)}m`:""))+(s.pFog>=.05?` · <span class="fogtag">안개 ${pct(s.pFog)}</span>`:"");
     const dest=out?s.route.replace("목포-",""):"목포";
     return `<div class="sail"><button aria-expanded="${open.has(id)}" data-id="${id}">
       <span class="dir ${out?"":"in"}" title="${out?"목포 출발":"섬 출발"}">${ARROW}</span>
@@ -320,7 +326,7 @@ function renderList(){
     </button>${open.has(id)?detail(s):""}</div>`}).join("");
   $("hero").innerHTML=summary(d);
   if(mode==="table"){$("list").className="list";$("list").innerHTML=ss.length?`<div class="panel tw"><table class="ttab"><tr><th>시각</th><th>배</th><th>구간</th><th>상태</th><th>비고</th></tr>${ss.map(s=>{const v=verdict(s),out=isOut(s);
-      const note=s.linked&&/예상$/.test(v.txt)&&!/^운항/.test(v.txt)?`${s.linked.time} ${s.linked.port}편 ${s.linked.status}에 따름`:liveFresh()&&s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
+      const note=v.risk?`날씨 위험 ${pct(s.p)} · 변경 가능`:s.linked&&/예상$|연동$/.test(v.txt)&&!/^운항/.test(v.txt)?`${s.linked.time} ${s.linked.port}편 ${s.linked.status}에 따름`:liveFresh()&&s.live&&s.live.state!=="before"?s.live.text:s.official?[s.official.reason,s.official.progress].filter(Boolean).join(" · "):`결항 ${pct(s.p)}${s.pFog>=.05?` · 안개 ${pct(s.pFog)}`:""}`;
       return `<tr><td class="tm">${s.approx?"약 ":""}${s.time}</td><td>${esc(s.vessel)}</td><td>${esc(s.port)} → ${esc(out?s.route.replace("목포-",""):"목포")}</td><td><span class="s ${v.cls}">${esc(v.txt)}</span></td><td>${esc(note)}</td></tr>`}).join("")}</table></div>`:`<p class="empty">조건에 맞는 배편이 없습니다</p>`;return}
   $("list").className="list cards";
   $("list").innerHTML=cards||`<p class="empty">조건에 맞는 배편이 없습니다</p>`;
@@ -380,6 +386,12 @@ function renderWhy(){
     <p class="lbl">오차는 Brier 점수(0에 가까울수록 정확). 결항 포착 = 실제 결항 중 미리 50% 이상으로 본 비율.</p>`
    :`<p>과거 실적이 아직 충분히 모이지 않았습니다. 자료가 쌓이면 자동으로 검증 결과가 나옵니다. (수집 ${D.historyCoverage?.daysCollected??0}/${D.historyCoverage?.target??"–"}일)</p>`}
   </section>
+  ${D.forecastCheck?`<section class="panel"><h2>KOMSA 전날 운항예보는 얼마나 맞았나</h2>
+    ${D.forecastCheck.days?`<p class="lbl">${D.forecastCheck.days}일 치, 전날 마지막 예보와 실제 확정 결과 비교</p>
+    <div class="tw"><table><tr><th>전날 예보 \\ 실제</th><th>정상</th><th>통제</th><th>비운</th></tr>${Object.entries(D.forecastCheck.matrix).map(([f,m])=>`<tr><td>${({operated:"운항",pending:"검토",cancelled:"결항",nonoperating:"비운항"})[f]||f}</td><td>${m.operated||0}</td><td>${m.cancelled||0}</td><td>${m.nonoperating||0}</td></tr>`).join("")}</table></div>
+    ${Object.keys(D.forecastCheck.byRisk).length?`<p class="lbl">전날 '운항' 예보였을 때, 이 사이트의 날씨 위험별 실제 통제: ${Object.entries(D.forecastCheck.byRisk).map(([b,x])=>`${b} ${x.cancelled}/${x.n}편`).join(" · ")}</p>`:""}
+    ${D.forecastCheck.misses.length?`<p class="lbl">'운항' 예보 → 실제 통제: ${D.forecastCheck.misses.map(m=>`${m.date.slice(5)} ${m.time} ${esc(m.vessel)}${m.p!=null?" (날씨 위험 "+pct(m.p)+")":""}`).join(", ")}</p>`:""}`
+    :`<p>11/19부터 KOMSA 전날 예보를 저장하기 시작했습니다. 하루가 지나 실제 결과가 확정되면 여기서 비교합니다.</p>`}</section>`:""}
   ${D.modelSkill?.leads?`<section class="panel"><h2>기상 모델별 정확도</h2>
     <p>Open-Meteo에 보관된 각 모델의 '며칠 전 예보'로 ${esc(D.modelSkill.from)}~${esc(D.modelSkill.to)} 실제 운항 결과를 다시 맞혀 본 점수입니다(오차, 낮을수록 정확). 며칠 전 예보인지에 따라 가장 잘 맞힌 방식을 골라 화면의 확률에 씁니다. 일주일마다 다시 계산합니다.</p>
     <div class="tw"><table><tr><th>며칠 전</th>${["best_match","ecmwf_ifs025","gfs_seamless","jma_seamless"].map(m=>`<th>${({best_match:"종합",ecmwf_ifs025:"유럽",gfs_seamless:"미국",jma_seamless:"일본"})[m]}</th>`).join("")}<th>평소 비율만</th><th>쓰는 방식</th></tr>
