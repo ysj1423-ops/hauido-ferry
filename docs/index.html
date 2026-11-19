@@ -227,11 +227,8 @@ function verdict(s){
       if(O.kind==="today"&&dep)return{cls:"off go",txt:/완료/.test(O.progress||"")?"운항 완료":"정상 출항",lv:0};
       if(O.kind==="today"&&F&&F.outcome==="cancelled")return{cls:"stop",txt:`${F.status} (전날 예보)`,lv:2};
       if(O.kind==="today"&&F&&F.outcome==="nonoperating")return{cls:"na",txt:`${F.status} (전날 예보)`,lv:-1};
-      // 공식은 운항이어도 날씨 위험이 높으면 함께 알린다(다음 날 예보·당일 출항 전은 바뀔 수 있음)
-      const base=O.kind==="tomorrow"?"운항 예보":"운항 예정";
-      if(s.p!=null&&s.p>=.5)return{cls:"stop",txt:base+" · 결항 위험",lv:1,risk:true};
-      if(s.p!=null&&s.p>=.2)return{cls:"warn",txt:base+" · 주의",lv:1,risk:true};
-      return{cls:"off go",txt:base,lv:0};}
+      // 공식 발표가 우선. 날씨 예상 위험은 상세 내용과 분석에만 쓴다
+      return{cls:"off go",txt:O.kind==="tomorrow"?"운항 예보":"운항 예정",lv:0};}
     return{cls:"na",txt:O.status||"확인 중",lv:-1}}
   if(s.p==null)return{cls:"na",txt:"자료 없음",lv:-1};
   const fl=s.flags||[];
@@ -357,7 +354,8 @@ function detail(s){
   const chain=L&&L.chain&&L.chain.length?`<div><span class="lbl">운항 진행 (${L.at?esc(L.at)+" 기록":"출항 전"}${L.delay>=5?` · 평소보다 ${L.delay}분 늦음`:""})</span>
     <ol class="chain">${L.chain.map(c=>`<li class="${c.passed?"done":c.here?"here":""}"><i></i><span>${esc(c.port)}</span><small>${c.at?esc(c.at):c.eta?"약 "+esc(c.eta):""}</small></li>`).join("")}</ol></div>`:"";
   const tripNote=s.trip&&s.trip.legs.length>1?`<div><span class="lbl">왕복으로 판단 (목포에서 나가 섬을 들러 목포로 돌아오는 한 운항)</span><br>${s.trip.legs.map(l=>`${l.time} ${esc(l.port)} 출발 ${l.p==null?"":pct(l.p)}`).join(" → ")}${s.pSelf!=null&&s.p!=null?`<br><span class="lbl">이 구간만 ${pct(s.pSelf)} · 왕복 중 가장 위험한 구간 ${pct(s.p)} (화면 표시 값)</span>`:""}${s.linked?`<br><b>${s.linked.time} ${esc(s.linked.port)}편이 공식 '${esc(s.linked.status)}'${s.linked.reason?"("+esc(s.linked.reason)+")":""}이라 이 구간도 운항하기 어렵습니다.</b>`:""}</div>`:"";
-  return `<div class="more">${tripNote}${viaNote}${chain}
+  const offRisk=s.official&&s.official.outcome==="operated"&&s.p!=null?`<div class="lbl">공식 발표 기준으로 표시합니다. 참고: 날씨로 본 결항 예상 ${pct(s.p)}</div>`:"";
+  return `<div class="more">${offRisk}${tripNote}${viaNote}${chain}
     <div class="kv"><div><small>풍속</small><b>${w.wind??"–"}</b> m/s</div><div><small>돌풍</small><b>${w.gust??"–"}</b> m/s</div><div><small>지점 모델 파고</small><b>${w.wave??"–"}</b> m</div><div><small>시정</small><b>${w.visKm??"–"}</b> km</div></div>
     ${k?`<div><span class="lbl">기상청 ${esc(k.kind)} 해상예보 (${esc(k.area)}, ${esc(k.part)})</span><br>${k.wind?`풍속 ${esc(k.wind)} m/s · `:""}파고 ${esc(k.wave)} m · ${esc(k.sky)}</div>`:`<div class="lbl">기상청 해상예보 범위 밖</div>`}
     ${s.pWind!=null||s.pFog!=null?`<div><span class="lbl">결항 원인별 확률</span><br>바람·파도 ${pct(s.pWind)} <small class="lbl">(${esc(s.method||"단순 평균")})</small> · 안개 ${pct(s.pFog)} <small class="lbl">(${esc(s.fogMethod||"단순 평균")})</small></div>`:""}
