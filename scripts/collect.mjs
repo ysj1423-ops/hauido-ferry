@@ -300,8 +300,8 @@ const kmaFor = (periods, date, hour) => {
 const P = CFG.point;
 async function omForecast() {
   const models = SKILL_MODELS;
-  const w = await om.get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=8`);
-  const m = await om.get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&forecast_days=8&cell_selection=sea`);
+  const w = await om.get(`https://api.open-meteo.com/v1/forecast?latitude=${P.lat}&longitude=${P.lon}&hourly=wind_speed_10m,wind_gusts_10m,visibility,temperature_2m,dew_point_2m,relative_humidity_2m,cloud_cover_low&models=${models.join(",")}&wind_speed_unit=ms&timezone=Asia%2FSeoul&forecast_days=10`);
+  const m = await om.get(`https://marine-api.open-meteo.com/v1/marine?latitude=${P.lat}&longitude=${P.lon}&hourly=wave_height,sea_surface_temperature&timezone=Asia%2FSeoul&forecast_days=10&cell_selection=sea`);
   const idx = new Map(m.hourly.time.map((t, i) => [t, m.hourly.wave_height[i]]));
   const sst = new Map(m.hourly.time.map((t, i) => [t, m.hourly.sea_surface_temperature?.[i]]));
   const B = k => w.hourly[`${k}_best_match`] ?? w.hourly[k];
@@ -588,16 +588,16 @@ function evaluate(rows, pfn) {
   });
 
   // 3) 모델 예보
-  // 7일 예보는 한 시간에 한 번만 새로 받고(모델 자체가 몇 시간마다 갱신), 실패하면 12시간 안의 저장본을 쓴다.
+  // 9일 예보는 한 시간에 한 번만 새로 받고(모델 자체가 몇 시간마다 갱신), 실패하면 12시간 안의 저장본을 쓴다.
   // 저장본은 저장소가 아니라 GitHub Actions 캐시(cache/)에 둔다.
   const CACHE = path.join(ROOT, "cache"); fs.mkdirSync(CACHE, { recursive: true });
   const fcFile = path.join(CACHE, "om-forecast.json");
   let fc = null; try { fc = JSON.parse(fs.readFileSync(fcFile, "utf8")); } catch {}
   const fcAge = fc ? Date.now() - Date.parse(fc.fetchedAt) : Infinity;
   let omNow = null;
-  if (fcAge < 55 * 60e3) { omNow = fc.data; sources.push({ key: "om", name: "Open-Meteo 7일 예보(4개 모델)", ok: true, note: `저장본 사용(${Math.round(fcAge / 60e3)}분 전 받음)` }); }
+  if (fcAge < 55 * 60e3) { omNow = fc.data; sources.push({ key: "om", name: "Open-Meteo 9일 예보(4개 모델)", ok: true, note: `저장본 사용(${Math.round(fcAge / 60e3)}분 전 받음)` }); }
   else {
-    omNow = await source("om", "Open-Meteo 7일 예보(4개 모델)", omForecast);
+    omNow = await source("om", "Open-Meteo 9일 예보(4개 모델)", omForecast);
     if (omNow) { try { fs.writeFileSync(fcFile, JSON.stringify({ fetchedAt: new Date().toISOString(), data: omNow })); } catch {} }
     else if (fc && fcAge < 12 * 3600e3) {
       omNow = fc.data;
@@ -706,9 +706,10 @@ function evaluate(rows, pfn) {
       from: rs.map(r => r.date).sort()[0] || null, reasons };
   }).sort((a, b) => b.total - a.total);
 
-  // 5) 앞으로 7일 배편 목록
+  // 5) 앞으로 9일 배편 목록 (8~9일 뒤는 모델 성적표가 없어 7일 전 성적을 그대로 쓴다)
   const days = [];
-  for (let i = 0; i < 7; i++) days.push(addDays(TODAY, i));
+  const HORIZON = 9;
+  for (let i = 0; i < HORIZON; i++) days.push(addDays(TODAY, i));
   function scheduleFor(date) {
     const L = live.today?.date === date ? live.today : live.tomorrow?.date === date ? live.tomorrow : null;
     if (L && L.rows.length) return { basis: L === live.today ? "KOMSA 당일 운항현황" : `KOMSA 다음 날 운항예보${live.tomorrow.updated ? " (" + live.tomorrow.updated + " 발표)" : ""}`,
