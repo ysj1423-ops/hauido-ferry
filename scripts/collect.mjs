@@ -538,6 +538,12 @@ function evaluate(rows, pfn) {
   const live = { today: null, tomorrow: null };
   live.today = await source("komsaToday", "KOMSA 당일 운항현황", komsaToday);
   live.tomorrow = await source("komsaTomorrow", "KOMSA 다음 날 운항예보", komsaTomorrow);
+  // 잠깐 접속이 실패하면 직전 값을 그대로 쓴다(KOMSA 3시간, 기상청 12시간 안). 공식 표시가 깜빡이지 않게.
+  const ageH = t => t ? (Date.now() - Date.parse(t)) / 3600e3 : Infinity;
+  const keepNote = (key, t) => { const x = sources.find(y => y.key === key); if (x) x.error = `${x.error} · ${Math.round(ageH(t) * 60)}분 전 자료 사용`; };
+  const lc = prev?.liveCache || {};
+  if (!live.today && lc.today?.date === TODAY && ageH(lc.at) < 3) { live.today = lc.today; keepNote("komsaToday", lc.at); }
+  if (!live.tomorrow && lc.tomorrow?.date && lc.tomorrow.date > TODAY && ageH(lc.at) < 3) { live.tomorrow = lc.tomorrow; keepNote("komsaTomorrow", lc.at); }
   // 다음 날 운항예보를 날짜별로 보관 (자정이 지나 당일 현황이 '정상'(기본값)만 보여줄 때 전날 예보의 '검토·결항·비운항'을 잃지 않도록)
   const memo = Object.fromEntries(Object.entries(prev?.forecastMemo || {}).filter(([d]) => d >= TODAY));
   if (live.tomorrow?.date && live.tomorrow.rows.length) memo[live.tomorrow.date] = { updated: live.tomorrow.updated,
@@ -563,8 +569,11 @@ function evaluate(rows, pfn) {
   });
 
   // 2) 기상청 해상예보: 최신 + 과거 발표분(학습용, 전날 17시 발표)
-  const kmaNow = await source("kma", "기상청 단기 해상예보", kmaLatest);
-  const kmaMidNow = await source("kmaMid", "기상청 중기 해상예보(서해남부)", kmaMid);
+  let kmaNow = await source("kma", "기상청 단기 해상예보", kmaLatest);
+  let kmaMidNow = await source("kmaMid", "기상청 중기 해상예보(서해남부)", kmaMid);
+  const kc = prev?.kmaCache || {};
+  if (!kmaNow && kc.short && ageH(kc.shortAt) < 12) { kmaNow = kc.short; keepNote("kma", kc.shortAt); }
+  if (!kmaMidNow && kc.mid && ageH(kc.midAt) < 12) { kmaMidNow = kc.mid; keepNote("kmaMid", kc.midAt); }
   if (kmaMidNow?.length) { const arc = readJSON("kma-mid-archive.json", {}); arc[TODAY] ||= kmaMidNow; writeJSON("kma-mid-archive.json", arc); }
   await source("kmaArchive", "기상청 해상예보 과거 발표분", async () => {
     const dates = [...new Set(Object.values(act.rows).map(r => r.date))].filter(d => d < TODAY).sort().reverse();
@@ -675,8 +684,18 @@ function evaluate(rows, pfn) {
     if (fresh?.leads && Object.keys(fresh.leads).length) { writeJSON("model-skill.json", fresh); log("모델 성적 저장", fresh.computedOn); }
     return;
   }
-  const weightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.leads?.[lead] || null; };
-  const fogWeightsFor = date => { const lead = Math.min(7, Math.max(1, Math.round((Date.parse(date) - Date.parse(TODAY)) / 864e5) || 1)); return skill?.fogLeads?.[lead] || null; };
+  // 출항까지 남은 실제 시간(일)으로 앞뒤 선행일의 방식을 비율대로 섞는다 → 자정에 확률이 갑자기 뛰지 않음
+  const blendSkill = (leads, date, time) => {
+    if (!leads) return null;
+    const L = Math.min(7, Math.max(1, (Date.parse(`${date}T${time}:00+09:00`) - Date.now()) / 864e5));
+    const lo = Math.floor(L), hi = Math.min(7, lo + 1), f = L - lo, a = leads[lo], b = leads[hi];
+    if (!a || !b || lo === hi || f < 0.01) return a || b || null;
+    const weights = {};
+    for (const m of new Set([...Object.keys(a.weights), ...Object.keys(b.weights)])) weights[m] = (1 - f) * (a.weights[m] || 0) + f * (b.weights[m] || 0);
+    return { weights, chosen: f < 0.5 ? a.chosen : b.chosen };
+  };
+  const weightsFor = (date, time) => blendSkill(skill?.leads, date, time);
+  const fogWeightsFor = (date, time) => blendSkill(skill?.fogLeads, date, time);
 
   // 배별 실적 요약
   const vesselStats = [...new Set(actRows.map(r => r.vessel))].map(name => {
@@ -729,12 +748,12 @@ function evaluate(rows, pfn) {
       }
       const main = feats.best_match || Object.values(feats)[0] || null;
       const pv = Object.values(probs).filter(p => p != null);
-      const sk = weightsFor(date);
+      const sk = weightsFor(date, s.time);
       const wv = Object.values(windProbs).filter(x => x != null);
       let pWind = wv.length ? wv.reduce((a, b) => a + b, 0) / wv.length : null; // 바람·파도 확률도 같은 방식
       if (sk) { let ws = 0, acc = 0; for (const [m, w] of Object.entries(sk.weights)) if (windProbs[m] != null && w > 0) { acc += w * windProbs[m]; ws += w; } if (ws > 0) pWind = acc / ws; }
       // 안개 확률도 안개 성적으로 고른 방식으로
-      const skf = fogWeightsFor(date);
+      const skf = fogWeightsFor(date, s.time);
       const fv = Object.values(fogProbs).filter(x => x != null);
       if (fv.length) fogP = fv.reduce((a, b) => a + b, 0) / fv.length;
       if (skf) { let ws = 0, acc = 0; for (const [m, w] of Object.entries(skf.weights)) if (fogProbs[m] != null && w > 0) { acc += w * fogProbs[m]; ws += w; } if (ws > 0) fogP = acc / ws; }
@@ -889,6 +908,9 @@ function evaluate(rows, pfn) {
   const latest = {
     generatedAt: new Date().toISOString(), today: TODAY,
     kmaIssued: kmaNow?.annc || null, kmaZone: CFG.kmaZone.name, point: CFG.point,
+    liveCache: { at: (live.today && sources.find(x => x.key === "komsaToday")?.ok) ? new Date().toISOString() : (prev?.liveCache?.at || null), today: live.today, tomorrow: live.tomorrow },
+    kmaCache: { short: kmaNow, shortAt: sources.find(x => x.key === "kma")?.ok ? new Date().toISOString() : (prev?.kmaCache?.shortAt || null),
+      mid: kmaMidNow, midAt: sources.find(x => x.key === "kmaMid")?.ok ? new Date().toISOString() : (prev?.kmaCache?.midAt || null) },
     days: out, changeLog, sources, forecastMemo: memo, forecastCheck: fCheck, resume,
     openMeteoRequests: om.stats,
     model: {
