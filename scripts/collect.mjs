@@ -591,7 +591,7 @@ function evaluate(rows, pfn) {
   // 9일 예보는 한 시간에 한 번만 새로 받고(모델 자체가 몇 시간마다 갱신), 실패하면 12시간 안의 저장본을 쓴다.
   // 저장본은 저장소가 아니라 GitHub Actions 캐시(cache/)에 둔다.
   const CACHE = path.join(ROOT, "cache"); fs.mkdirSync(CACHE, { recursive: true });
-  const fcFile = path.join(CACHE, "om-forecast.json");
+  const fcFile = path.join(CACHE, "om-forecast-10d.json");
   let fc = null; try { fc = JSON.parse(fs.readFileSync(fcFile, "utf8")); } catch {}
   const fcAge = fc ? Date.now() - Date.parse(fc.fetchedAt) : Infinity;
   let omNow = null;
