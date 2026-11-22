@@ -1,1 +1,1 @@
-{"hosts":{"api.open-meteo.com":{"until":1795339856082,"reason":"transient failure after 3 attempts"},"historical-forecast-api.open-meteo.com":{"until":1795219212798,"reason":"HTTP 429"}}}
+{"hosts":{"api.open-meteo.com":{"until":1795341652826,"reason":"transient failure after 3 attempts"},"historical-forecast-api.open-meteo.com":{"until":1795219212798,"reason":"HTTP 429"}}}
