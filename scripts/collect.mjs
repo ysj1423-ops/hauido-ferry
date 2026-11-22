@@ -588,18 +588,19 @@ function evaluate(rows, pfn) {
   });
 
   // 3) 모델 예보
-  // 9일 예보는 한 시간에 한 번만 새로 받고(모델 자체가 몇 시간마다 갱신), 실패하면 12시간 안의 저장본을 쓴다.
+  // 9일 예보는 3시간에 한 번만 새로 받고(모델 자체가 6시간마다 갱신), 실패하면 48시간 안의 저장본을 쓴다.
   // 저장본은 저장소가 아니라 GitHub Actions 캐시(cache/)에 둔다.
   const CACHE = path.join(ROOT, "cache"); fs.mkdirSync(CACHE, { recursive: true });
   const fcFile = path.join(CACHE, "om-forecast-10d.json");
   let fc = null; try { fc = JSON.parse(fs.readFileSync(fcFile, "utf8")); } catch {}
   const fcAge = fc ? Date.now() - Date.parse(fc.fetchedAt) : Infinity;
   let omNow = null;
-  if (fcAge < 55 * 60e3) { omNow = fc.data; sources.push({ key: "om", name: "Open-Meteo 9일 예보(4개 모델)", ok: true, note: `저장본 사용(${Math.round(fcAge / 60e3)}분 전 받음)` }); }
+  // 3시간 안에 받은 예보가 있으면 그대로 쓴다(모델은 6시간마다 새로 나옴)
+  if (fcAge < 175 * 60e3) { omNow = fc.data; sources.push({ key: "om", name: "Open-Meteo 9일 예보(4개 모델)", ok: true, note: `저장본 사용(${Math.round(fcAge / 60e3)}분 전 받음)` }); }
   else {
     omNow = await source("om", "Open-Meteo 9일 예보(4개 모델)", omForecast);
     if (omNow) { try { fs.writeFileSync(fcFile, JSON.stringify({ fetchedAt: new Date().toISOString(), data: omNow })); } catch {} }
-    else if (fc && fcAge < 12 * 3600e3) {
+    else if (fc && fcAge < 48 * 3600e3) { // 한도 초과 등으로 못 받으면 48시간 안의 예보를 대신 쓴다
       omNow = fc.data;
       const src = sources.find(x => x.key === "om"); src.error = `${src.error} · ${Math.round(fcAge / 60e3)}분 전 저장본으로 표시`;
     }
