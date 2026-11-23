@@ -20,7 +20,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 90   # 밤에는 다음 확인까지 최대 1시간 기다리므로 넉넉하게
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,6 +85,7 @@ jobs:
             for s in $slots; do t=$(TZ=Asia/Seoul date -d "$day $s" +%s); if [ $t -gt $((now + 60)) ] && { [ $best = 0 ] || [ $t -lt $best ]; }; then best=$t; fi; done
           done
           wait=$((best - now - 45)); [ $wait -lt 0 ] && wait=0
+          [ $wait -gt 4200 ] && wait=4200   # 실행 시간 제한(90분) 안에 반드시 다음 실행을 시작하도록
           echo "다음 확인: $(TZ=Asia/Seoul date -d @$best '+%m-%d %H:%M') KST ($wait초 대기)"
           sleep $wait
           others=$(gh api "repos/${{ github.repository }}/actions/workflows/collect.yml/runs?per_page=10" --jq "[.workflow_runs[] | select((.status==\"queued\" or .status==\"in_progress\" or .status==\"waiting\" or .status==\"pending\") and .id != ${{ github.run_id }})] | length")
